@@ -1,0 +1,102 @@
+"""Fetch and cache raw CVE records from the NVD API."""
+
+from __future__ import annotations
+
+import json
+import os
+import time
+from pathlib import Path
+from typing import Any
+
+import requests
+from dotenv import load_dotenv
+
+from ingest.config import NVD_API_BASE, PACKAGES, RAW_NVD_DIR
+
+load_dotenv()
+
+NVD_API_KEY = os.getenv("NVD_API_KEY", "").strip() or None
+REQUEST_DELAY_SECONDS = 1 if NVD_API_KEY else 6
+REQUEST_TIMEOUT_SECONDS = 60
+
+
+def _build_headers() -> dict[str, str]:
+    headers: dict[str, str] = {}
+    if NVD_API_KEY:
+        headers["apiKey"] = NVD_API_KEY
+    return headers
+
+
+def _fetch_page(package_name: str, start_index: int) -> dict[str, Any]:
+    params = {
+        "keywordSearch": package_name,
+        "startIndex": start_index,
+    }
+    response = requests.get(
+        NVD_API_BASE,
+        headers=_build_headers(),
+        params=params,
+        timeout=REQUEST_TIMEOUT_SECONDS,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+def fetch_cves_for_package(package_name: str) -> dict[str, Any]:
+    pages: list[dict[str, Any]] = []
+    all_vulnerabilities: list[dict[str, Any]] = []
+    total_results = 0
+    results_per_page = 0
+    start_index = 0
+
+    while True:
+        page = _fetch_page(package_name, start_index)
+        pages.append(page)
+
+        if not total_results:
+            total_results = int(page.get("totalResults", 0) or 0)
+        if not results_per_page:
+            results_per_page = int(page.get("resultsPerPage", 0) or 0)
+
+        vulnerabilities = page.get("vulnerabilities", [])
+        if isinstance(vulnerabilities, list):
+            all_vulnerabilities.extend(vulnerabilities)
+
+        fetched_count = len(vulnerabilities) if isinstance(vulnerabilities, list) else 0
+        if fetched_count == 0 or len(all_vulnerabilities) >= total_results:
+            break
+
+        start_index += fetched_count
+        time.sleep(REQUEST_DELAY_SECONDS)
+
+    combined_response: dict[str, Any] = dict(pages[0]) if pages else {}
+    combined_response["resultsPerPage"] = results_per_page
+    combined_response["totalResults"] = total_results
+    combined_response["vulnerabilities"] = all_vulnerabilities
+    combined_response["pagesFetched"] = len(pages)
+    combined_response["rawPages"] = pages
+    return combined_response
+
+
+def _save_raw_response(package_name: str, payload: dict[str, Any]) -> Path:
+    output_dir = Path(RAW_NVD_DIR)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / f"{package_name}.json"
+    with output_path.open("w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2, ensure_ascii=False)
+        handle.write("\n")
+    return output_path
+
+
+def main() -> None:
+    for package in PACKAGES:
+        package_name = package["name"]
+        response = fetch_cves_for_package(package_name)
+        _save_raw_response(package_name, response)
+        cve_count = len(response.get("vulnerabilities", []))
+        print(f"{package_name}: {cve_count} CVEs")
+
+
+if __name__ == "__main__":
+    main()
+
