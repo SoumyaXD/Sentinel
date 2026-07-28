@@ -18,6 +18,10 @@ load_dotenv()
 NVD_API_KEY = os.getenv("NVD_API_KEY", "").strip() or None
 REQUEST_DELAY_SECONDS = 1 if NVD_API_KEY else 6
 REQUEST_TIMEOUT_SECONDS = 60
+QUERY_TERMS = {
+    "log4j-core": "log4j",
+    "express": "express.js",
+}
 
 
 def _build_headers() -> dict[str, str]:
@@ -28,8 +32,9 @@ def _build_headers() -> dict[str, str]:
 
 
 def _fetch_page(package_name: str, start_index: int) -> dict[str, Any]:
+    query_term = QUERY_TERMS.get(package_name, package_name)
     params = {
-        "keywordSearch": package_name,
+        "keywordSearch": query_term,
         "startIndex": start_index,
     }
     response = requests.get(
@@ -88,15 +93,31 @@ def _save_raw_response(package_name: str, payload: dict[str, Any]) -> Path:
     return output_path
 
 
+def _sample_descriptions(payload: dict[str, Any], limit: int = 3) -> list[str]:
+    samples: list[str] = []
+    for vulnerability in payload.get("vulnerabilities", []):
+        if len(samples) >= limit:
+            break
+        cve = vulnerability.get("cve", {})
+        for description in cve.get("descriptions", []):
+            if description.get("lang") == "en" and description.get("value"):
+                samples.append(description["value"])
+                break
+    return samples
+
+
 def main() -> None:
     for package in PACKAGES:
         package_name = package["name"]
         response = fetch_cves_for_package(package_name)
         _save_raw_response(package_name, response)
         cve_count = len(response.get("vulnerabilities", []))
-        print(f"{package_name}: {cve_count} CVEs")
+        query_term = QUERY_TERMS.get(package_name, package_name)
+        print(f"{package_name} (keywordSearch={query_term}): {cve_count} CVEs")
+        if package_name in QUERY_TERMS:
+            for index, description in enumerate(_sample_descriptions(response), start=1):
+                print(f"  sample {index}: {description}")
 
 
 if __name__ == "__main__":
     main()
-
