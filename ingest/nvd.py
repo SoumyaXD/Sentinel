@@ -27,11 +27,6 @@ PACKAGE_CPE_MATCHES = {
     "flask": "cpe:2.3:a:palletsprojects:flask:*:*:*:*:*:*:*:*",
     "axios": "cpe:2.3:a:axios:axios:*:*:*:*:*:node.js:*:*",
 }
-SPOT_CHECK_PACKAGES = {"log4j-core", "express"}
-FALSE_POSITIVE_CVES = {
-    "log4j-core": {"CVE-2008-7261"},
-    "express": {"CVE-2018-10813"},
-}
 
 
 def _build_headers() -> dict[str, str]:
@@ -109,7 +104,7 @@ def _save_raw_response(package_name: str, payload: dict[str, Any]) -> Path:
     return output_path
 
 
-def _sample_descriptions(payload: dict[str, Any], limit: int = 3) -> list[str]:
+def _sample_descriptions(payload: dict[str, Any], limit: int = 2) -> list[str]:
     samples: list[str] = []
     for vulnerability in payload.get("vulnerabilities", []):
         if len(samples) >= limit:
@@ -122,14 +117,6 @@ def _sample_descriptions(payload: dict[str, Any], limit: int = 3) -> list[str]:
     return samples
 
 
-def _contains_any_cve_ids(payload: dict[str, Any], cve_ids: set[str]) -> bool:
-    for vulnerability in payload.get("vulnerabilities", []):
-        cve = vulnerability.get("cve", {})
-        if cve.get("id") in cve_ids:
-            return True
-    return False
-
-
 def main() -> None:
     for package in PACKAGES:
         package_name = package["name"]
@@ -137,15 +124,13 @@ def main() -> None:
         _save_raw_response(package_name, response)
         cve_count = len(response.get("vulnerabilities", []))
         match_string = PACKAGE_CPE_MATCHES.get(package_name)
-        method_label = "virtualMatchString" if match_string else "keywordSearch"
-        print(f"{package_name} ({method_label}): {cve_count} CVEs")
-        if package_name in SPOT_CHECK_PACKAGES:
-            for index, description in enumerate(_sample_descriptions(response), start=1):
-                print(f"  sample {index}: {description}")
-            cve_ids = FALSE_POSITIVE_CVES.get(package_name, set())
-            if cve_ids:
-                found = _contains_any_cve_ids(response, cve_ids)
-                print(f"  false positives present: {'yes' if found else 'no'}")
+        match_label = match_string if match_string else "FALLBACK: keywordSearch"
+        print(f"package: {package_name}")
+        print(f"cpe match used: {match_label}")
+        print(f"total CVE count: {cve_count}")
+        for index, description in enumerate(_sample_descriptions(response), start=1):
+            print(f"sample {index}: {description}")
+        print()
 
 
 if __name__ == "__main__":
