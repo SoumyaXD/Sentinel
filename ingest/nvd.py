@@ -18,9 +18,19 @@ load_dotenv()
 NVD_API_KEY = os.getenv("NVD_API_KEY", "").strip() or None
 REQUEST_DELAY_SECONDS = 1 if NVD_API_KEY else 6
 REQUEST_TIMEOUT_SECONDS = 60
-QUERY_TERMS = {
-    "log4j-core": "log4j",
-    "express": "express.js",
+PACKAGE_CPE_MATCHES = {
+    "lodash": "cpe:2.3:a:lodash:lodash:*:*:*:*:*:node.js:*:*",
+    "log4j-core": "cpe:2.3:a:apache:log4j:*:*:*:*:*:*:*:*",
+    "openssl": "cpe:2.3:a:openssl:openssl:*:*:*:*:*:*:*:*",
+    "django": "cpe:2.3:a:djangoproject:django:*:*:*:*:*:*:*:*",
+    "express": "cpe:2.3:a:openjsf:express:*:*:*:*:*:node.js:*:*",
+    "flask": "cpe:2.3:a:palletsprojects:flask:*:*:*:*:*:*:*:*",
+    "axios": "cpe:2.3:a:axios:axios:*:*:*:*:*:node.js:*:*",
+}
+SPOT_CHECK_PACKAGES = {"log4j-core", "express"}
+FALSE_POSITIVE_CVES = {
+    "log4j-core": {"CVE-2008-7261"},
+    "express": {"CVE-2018-10813"},
 }
 
 
@@ -32,11 +42,17 @@ def _build_headers() -> dict[str, str]:
 
 
 def _fetch_page(package_name: str, start_index: int) -> dict[str, Any]:
-    query_term = QUERY_TERMS.get(package_name, package_name)
+    cpe_match = PACKAGE_CPE_MATCHES.get(package_name)
     params = {
-        "keywordSearch": query_term,
         "startIndex": start_index,
     }
+    if cpe_match:
+        # Prefer NVD's product classification over free-text search.
+        params["virtualMatchString"] = cpe_match
+    else:
+        # Weaker fallback: only use keyword search when a clean CPE match is unavailable.
+        params["keywordSearch"] = package_name
+        print(f"[fallback keywordSearch] {package_name} has no clean CPE match; using broader text search")
     response = requests.get(
         NVD_API_BASE,
         headers=_build_headers(),
@@ -106,17 +122,30 @@ def _sample_descriptions(payload: dict[str, Any], limit: int = 3) -> list[str]:
     return samples
 
 
+def _contains_any_cve_ids(payload: dict[str, Any], cve_ids: set[str]) -> bool:
+    for vulnerability in payload.get("vulnerabilities", []):
+        cve = vulnerability.get("cve", {})
+        if cve.get("id") in cve_ids:
+            return True
+    return False
+
+
 def main() -> None:
     for package in PACKAGES:
         package_name = package["name"]
         response = fetch_cves_for_package(package_name)
         _save_raw_response(package_name, response)
         cve_count = len(response.get("vulnerabilities", []))
-        query_term = QUERY_TERMS.get(package_name, package_name)
-        print(f"{package_name} (keywordSearch={query_term}): {cve_count} CVEs")
-        if package_name in QUERY_TERMS:
+        match_string = PACKAGE_CPE_MATCHES.get(package_name)
+        method_label = "virtualMatchString" if match_string else "keywordSearch"
+        print(f"{package_name} ({method_label}): {cve_count} CVEs")
+        if package_name in SPOT_CHECK_PACKAGES:
             for index, description in enumerate(_sample_descriptions(response), start=1):
                 print(f"  sample {index}: {description}")
+            cve_ids = FALSE_POSITIVE_CVES.get(package_name, set())
+            if cve_ids:
+                found = _contains_any_cve_ids(response, cve_ids)
+                print(f"  false positives present: {'yes' if found else 'no'}")
 
 
 if __name__ == "__main__":
