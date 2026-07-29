@@ -1,0 +1,223 @@
+{
+  "generated_from": "data/normalized/all_cves.json",
+  "generated_at": "2026-07-29",
+  "status": "draft",
+  "notes": "Candidate questions were selected from real records in data/normalized/all_cves.json. expected_facts are intentionally left as placeholders for manual verification against the live NVD and OSV.dev websites.",
+  "entries": [
+    {
+      "id": "eval-001",
+      "type": "direct_lookup",
+      "question": "What is CVE-2020-28500?",
+      "expected_cve_ids": [
+        "CVE-2020-28500"
+      ],
+      "expected_facts": {
+        "status": "NEEDS MANUAL VERIFICATION"
+      },
+      "notes": "Candidate pulled from normalized lodash records. Verify against nvd.nist.gov and osv.dev on 2026-07-29."
+    },
+    {
+      "id": "eval-002",
+      "type": "direct_lookup",
+      "question": "What is CVE-2021-23337?",
+      "expected_cve_ids": [
+        "CVE-2021-23337"
+      ],
+      "expected_facts": {
+        "status": "NEEDS MANUAL VERIFICATION"
+      },
+      "notes": "Candidate pulled from normalized lodash records. Verify against nvd.nist.gov and osv.dev on 2026-07-29."
+    },
+    {
+      "id": "eval-003",
+      "type": "direct_lookup",
+      "question": "What is CVE-2024-43796?",
+      "expected_cve_ids": [
+        "CVE-2024-43796"
+      ],
+      "expected_facts": {
+        "status": "NEEDS MANUAL VERIFICATION"
+      },
+      "notes": "Candidate pulled from normalized express records. Verify against nvd.nist.gov and osv.dev on 2026-07-29."
+    },
+    {
+      "id": "eval-004",
+      "type": "direct_lookup",
+      "question": "What is CVE-2019-10742?",
+      "expected_cve_ids": [
+        "CVE-2019-10742"
+      ],
+      "expected_facts": {
+        "status": "NEEDS MANUAL VERIFICATION"
+      },
+      "notes": "Candidate pulled from normalized axios records. Verify against nvd.nist.gov and osv.dev on 2026-07-29."
+    },
+    {
+      "id": "eval-005",
+      "type": "direct_lookup",
+      "question": "What is CVE-2018-1000656?",
+      "expected_cve_ids": [
+        "CVE-2018-1000656"
+      ],
+      "expected_facts": {
+        "status": "NEEDS MANUAL VERIFICATION"
+      },
+      "notes": "Candidate pulled from normalized flask records. Verify against nvd.nist.gov and osv.dev on 2026-07-29."
+    },
+    {
+      "id": "eval-006",
+      "type": "direct_lookup",
+      "question": "What is CVE-2021-44228?",
+      "expected_cve_ids": [
+        "CVE-2021-44228"
+      ],
+      "expected_facts": {
+        "status": "NEEDS MANUAL VERIFICATION"
+      },
+      "notes": "Candidate pulled from normalized log4j records. Verify against nvd.nist.gov and osv.dev on 2026-07-29."
+    },
+    {
+      "id": "eval-007",
+      "type": "version_scoped_lookup",
+      "question": "What CVEs affect lodash version 4.17.20 via template import handling?",
+      "expected_cve_ids": [
+        "CVE-2021-23337"
+      ],
+      "expected_facts": {
+        "status": "NEEDS MANUAL VERIFICATION"
+      },
+      "notes": "Version-scoped candidate from normalized lodash records. Verify the affected range on live NVD and OSV pages."
+    },
+    {
+      "id": "eval-008",
+      "type": "version_scoped_lookup",
+      "question": "What CVEs affect lodash version 4.17.20 via ReDoS in trim and toNumber?",
+      "expected_cve_ids": [
+        "CVE-2020-28500"
+      ],
+      "expected_facts": {
+        "status": "NEEDS MANUAL VERIFICATION"
+      },
+      "notes": "Version-scoped candidate from normalized lodash records. Verify the affected range on live NVD and OSV pages."
+    },
+    {
+      "id": "eval-009",
+      "type": "version_scoped_lookup",
+      "question": "What CVE affects Express 4.19.0?",
+      "expected_cve_ids": [
+        "CVE-2024-43796"
+      ],
+      "expected_facts": {
+        "status": "NEEDS MANUAL VERIFICATION"
+      },
+      "notes": "Version-scoped candidate from normalized express records. Verify the affected range on live NVD and OSV pages."
+    },
+    {
+      "id": "eval-010",
+      "type": "version_scoped_lookup",
+      "question": "What CVE affects Axios 0.18.0?",
+      "expected_cve_ids": [
+        "CVE-2019-10742"
+      ],
+      "expected_facts": {
+        "status": "NEEDS MANUAL VERIFICATION"
+      },
+      "notes": "Version-scoped candidate from normalized axios records. Verify the affected range on live NVD and OSV pages."
+    },
+    {
+      "id": "eval-011",
+      "type": "version_scoped_lookup",
+      "question": "What CVE affects Flask 0.12.2?",
+      "expected_cve_ids": [
+        "CVE-2018-1000656"
+      ],
+      "expected_facts": {
+        "status": "NEEDS MANUAL VERIFICATION"
+      },
+      "notes": "Version-scoped candidate from normalized flask records. Verify the affected range on live NVD and OSV pages."
+    },
+    {
+      "id": "eval-012",
+      "type": "version_scoped_lookup",
+      "question": "What CVE affects Django 3.1.8?",
+      "expected_cve_ids": [
+        "CVE-2021-31542"
+      ],
+      "expected_facts": {
+        "status": "NEEDS MANUAL VERIFICATION"
+      },
+      "notes": "Version-scoped candidate from normalized django records. Verify the affected range on live NVD and OSV pages."
+    },
+    {
+      "id": "eval-013",
+      "type": "semantic_question",
+      "question": "Are there any remote code execution vulnerabilities in Log4j?",
+      "expected_cve_ids": [
+        "CVE-2019-17571",
+        "CVE-2021-4104",
+        "CVE-2021-44228"
+      ],
+      "expected_facts": {
+        "status": "NEEDS MANUAL VERIFICATION"
+      },
+      "notes": "Semantic lookup candidate based on Log4j records in the normalized set. Verify candidate CVEs against live NVD and OSV pages."
+    },
+    {
+      "id": "eval-014",
+      "type": "semantic_question",
+      "question": "Is lodash vulnerable to code injection through template imports?",
+      "expected_cve_ids": [
+        "CVE-2021-23337"
+      ],
+      "expected_facts": {
+        "status": "NEEDS MANUAL VERIFICATION"
+      },
+      "notes": "Semantic lookup candidate based on lodash template-injection records. Verify against live NVD and OSV pages."
+    },
+    {
+      "id": "eval-015",
+      "type": "semantic_question",
+      "question": "Does Express have any redirect-related security issues?",
+      "expected_cve_ids": [
+        "CVE-2024-29041",
+        "CVE-2024-43796"
+      ],
+      "expected_facts": {
+        "status": "NEEDS MANUAL VERIFICATION"
+      },
+      "notes": "Semantic lookup candidate based on express records in the normalized set. Verify candidate CVEs against live NVD and OSV pages."
+    },
+    {
+      "id": "eval-016",
+      "type": "semantic_question",
+      "question": "Is Flask vulnerable to denial of service via JSON handling?",
+      "expected_cve_ids": [
+        "CVE-2018-1000656"
+      ],
+      "expected_facts": {
+        "status": "NEEDS MANUAL VERIFICATION"
+      },
+      "notes": "Semantic lookup candidate based on flask records in the normalized set. Verify against live NVD and OSV pages."
+    },
+    {
+      "id": "eval-017",
+      "type": "trap_question",
+      "question": "What is CVE-2099-12345?",
+      "expected_cve_ids": [],
+      "expected_facts": {
+        "status": "NEEDS MANUAL VERIFICATION"
+      },
+      "notes": "Fabricated CVE ID trap. Expected to have no valid match in NVD or OSV."
+    },
+    {
+      "id": "eval-018",
+      "type": "trap_question",
+      "question": "What CVEs affect express version 99.0.0?",
+      "expected_cve_ids": [],
+      "expected_facts": {
+        "status": "NEEDS MANUAL VERIFICATION"
+      },
+      "notes": "No-known-vulnerability trap for an implausible package version. Expected to return no valid CVE matches."
+    }
+  ]
+}
