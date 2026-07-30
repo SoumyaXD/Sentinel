@@ -11,6 +11,9 @@ from typing import Any
 from ingest.config import NORMALIZED_DIR, PACKAGES, RAW_NVD_DIR, RAW_OSV_DIR
 
 PACKAGE_ECOSYSTEMS = {package["name"]: package["ecosystem"] for package in PACKAGES}
+NVD_PRIMARY_PRODUCT_ALIASES = {
+    "log4j-core": "log4j",
+}
 
 NVD_CVSS_PRIORITY = ("cvssMetricV31", "cvssMetricV30", "cvssMetricV2")
 
@@ -149,6 +152,10 @@ def _cpe_product_name(criteria: str, fallback: str) -> str:
     return fallback
 
 
+def _primary_nvd_product_name(package_name: str) -> str:
+    return NVD_PRIMARY_PRODUCT_ALIASES.get(package_name, package_name)
+
+
 def _nvd_version_range(cpe_match: dict[str, Any]) -> dict[str, str] | None:
     if not isinstance(cpe_match, dict):
         return None
@@ -177,7 +184,8 @@ def _nvd_affected_packages(
     package_name: str,
     ecosystem: str,
 ) -> list[dict[str, Any]]:
-    affected_packages: dict[tuple[str, str], dict[str, Any]] = {}
+    primary_product_name = _primary_nvd_product_name(package_name)
+    version_ranges: list[dict[str, Any]] = []
     configurations = cve.get("configurations", [])
     if not isinstance(configurations, list):
         return []
@@ -193,27 +201,17 @@ def _nvd_affected_packages(
                     continue
                 criteria = str(cpe_match.get("criteria", "")).strip()
                 product_name = _cpe_product_name(criteria, package_name)
+                if product_name != primary_product_name:
+                    continue
                 range_record = _nvd_version_range(cpe_match)
-                key = (product_name, ecosystem)
-                package_entry = affected_packages.setdefault(
-                    key,
-                    {
-                        "name": product_name,
-                        "ecosystem": ecosystem,
-                        "version_ranges": [],
-                    },
-                )
-                if range_record and range_record not in package_entry["version_ranges"]:
-                    package_entry["version_ranges"].append(range_record)
-
-    if affected_packages:
-        return list(affected_packages.values())
+                if range_record and range_record not in version_ranges:
+                    version_ranges.append(range_record)
 
     return [
         {
             "name": package_name,
             "ecosystem": ecosystem,
-            "version_ranges": [],
+            "version_ranges": version_ranges,
         }
     ]
 
