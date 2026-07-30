@@ -6,6 +6,19 @@ from ingest.normalize import _load_nvd_index, _load_osv_index, _normalize_record
 
 
 class NormalizeTests(unittest.TestCase):
+    def test_cve_1999_0428_extracts_cvss_v2_base_severity(self) -> None:
+        nvd_index = _load_nvd_index()
+        osv_index = _load_osv_index()
+
+        record = _normalize_record(
+            "CVE-1999-0428",
+            nvd_index.get("CVE-1999-0428", []),
+            osv_index.get("CVE-1999-0428", []),
+        )
+
+        self.assertEqual(record["cvss_score"], 7.5)
+        self.assertEqual(record["cvss_severity"], "HIGH")
+
     def test_cve_2020_28500_keeps_only_lodash_in_affected_packages(self) -> None:
         nvd_index = _load_nvd_index()
         osv_index = _load_osv_index()

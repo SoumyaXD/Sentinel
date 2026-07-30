@@ -94,23 +94,39 @@ def _nvd_cvss_metric(cve: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def _nvd_cvss_summary(cve: dict[str, Any]) -> tuple[float | None, str | None, str | None]:
-    cvss_data = _nvd_cvss_metric(cve)
-    if not cvss_data:
+    metrics = cve.get("metrics", {})
+    if not isinstance(metrics, dict):
         return None, None, None
-    score = cvss_data.get("baseScore")
-    vector = cvss_data.get("vectorString")
-    severity = cvss_data.get("baseSeverity")
-    parsed_score: float | None = None
-    if score is not None:
-        try:
-            parsed_score = float(score)
-        except (TypeError, ValueError):
-            parsed_score = None
-    return (
-        parsed_score,
-        str(vector) if vector else None,
-        str(severity).upper() if severity else None,
-    )
+
+    for key in NVD_CVSS_PRIORITY:
+        candidates = metrics.get(key, [])
+        if not isinstance(candidates, list):
+            continue
+        for metric in candidates:
+            if not isinstance(metric, dict):
+                continue
+            cvss_data = metric.get("cvssData", {})
+            if not isinstance(cvss_data, dict) or not cvss_data:
+                continue
+
+            score = cvss_data.get("baseScore")
+            vector = cvss_data.get("vectorString")
+            severity = metric.get("baseSeverity") if key == "cvssMetricV2" else cvss_data.get("baseSeverity")
+
+            parsed_score: float | None = None
+            if score is not None:
+                try:
+                    parsed_score = float(score)
+                except (TypeError, ValueError):
+                    parsed_score = None
+
+            return (
+                parsed_score,
+                str(vector) if vector else None,
+                str(severity).upper() if severity else None,
+            )
+
+    return None, None, None
 
 
 def _nvd_references(cve: dict[str, Any]) -> list[str]:

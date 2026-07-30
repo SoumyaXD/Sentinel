@@ -57,6 +57,36 @@ class ChunkCveRecordTests(unittest.TestCase):
         self.assertTrue(all(chunk["metadata"]["chunk_type"].startswith("section:") for chunk in chunks))
         self.assertTrue(all("CVE-TEST-0002 (CVSS 9.1, CRITICAL):" in chunk["text"] for chunk in chunks))
 
+    def test_code_fence_stays_with_reproduction_section(self) -> None:
+        record = {
+            "cve_id": "CVE-TEST-0003",
+            "description": (
+                "Intro paragraph.\n\n"
+                "Steps to reproduce:\n"
+                "```js\n"
+                "console.log('hello');\n"
+                "```\n"
+            ),
+            "sources": ["osv"],
+            "cvss_score": 5.3,
+            "cvss_severity": "MEDIUM",
+            "affected_packages": [
+                {
+                    "name": "lodash",
+                    "ecosystem": "npm",
+                    "version_ranges": [{"fixed": "4.17.21"}],
+                }
+            ],
+        }
+
+        chunks = chunk_cve_record(record)
+
+        self.assertEqual(len(chunks), 2)
+        self.assertIn("steps to reproduce.", chunks[1]["text"])
+        self.assertIn("```js", chunks[1]["text"])
+        self.assertIn("console.log('hello');", chunks[1]["text"])
+        self.assertIn("```", chunks[1]["text"])
+
 
 if __name__ == "__main__":
     unittest.main()

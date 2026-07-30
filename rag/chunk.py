@@ -184,7 +184,31 @@ def _split_into_sections(text: str) -> list[tuple[str, str]]:
 
 
 def _split_paragraphs(text: str) -> list[tuple[str, str]]:
-    paragraphs = [paragraph.strip() for paragraph in re.split(r"\n\s*\n+", text.strip()) if paragraph.strip()]
+    blocks: list[list[str]] = []
+    current: list[str] = []
+    in_code_block = False
+
+    def flush() -> None:
+        if current:
+            block = "\n".join(current).strip()
+            if block:
+                blocks.append([block])
+            current.clear()
+
+    for line in text.splitlines():
+        stripped = line.strip()
+        if _is_code_fence(line):
+            current.append(line)
+            in_code_block = not in_code_block
+            continue
+        if not in_code_block and not stripped:
+            flush()
+            continue
+        current.append(line)
+
+    flush()
+
+    paragraphs = [block[0] for block in blocks]
     if len(paragraphs) <= 1:
         return []
     return [(f"paragraph_{index + 1}", paragraph) for index, paragraph in enumerate(paragraphs)]
