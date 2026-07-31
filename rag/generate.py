@@ -16,7 +16,7 @@ from rag.retriever import retrieve
 load_dotenv()
 
 CVE_ID_RE = re.compile(r"CVE-\d{4}-\d+", re.IGNORECASE)
-DEFAULT_MODEL = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
+DEFAULT_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 DEFAULT_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
 
 
@@ -36,23 +36,6 @@ def _unique_cve_ids(text: str) -> list[str]:
     return ordered
 
 
-def _format_cvss_line(metadata: dict[str, Any]) -> str:
-    score = metadata.get("cvss_score")
-    if score is None:
-        return ""
-
-    severity = metadata.get("cvss_severity")
-    parts: list[str] = []
-
-    try:
-        parts.append(f"{float(score):g}")
-    except (TypeError, ValueError):
-        parts.append(str(score))
-
-    if severity:
-        parts.append(str(severity).upper())
-
-    return f"CVSS: {', '.join(parts)}"
 
 
 def _format_affected_packages(metadata: dict[str, Any]) -> str:
@@ -90,10 +73,6 @@ def _format_chunk_context(chunk: dict[str, Any], index: int) -> str:
     chunk_type = str(metadata.get("chunk_type", f"chunk_{index}")).strip() or f"chunk_{index}"
     lines = [f"[Chunk {index}] CVE ID: {cve_id}", f"Chunk type: {chunk_type}"]
 
-    cvss_line = _format_cvss_line(metadata)
-    if cvss_line:
-        lines.append(cvss_line)
-
     affected_packages = _format_affected_packages(metadata)
     if affected_packages:
         lines.append(affected_packages)
@@ -113,69 +92,6 @@ def _build_context(retrieved_chunks: list[dict[str, Any]]) -> str:
         if isinstance(chunk, dict)
     ]
     return "\n\n---\n\n".join(formatted_chunks)
-
-
-def _chunk_evidence_text(chunk: dict[str, Any]) -> str:
-    text = str(chunk.get("text", "")).strip()
-    if "Evidence:" in text:
-        text = text.split("Evidence:", 1)[1].strip()
-    return re.sub(r"\s+", " ", text)
-
-
-def _summarize_evidence(text: str, limit: int = 240) -> str:
-    if not text:
-        return ""
-
-    sentences = re.split(r"(?<=[.!?])\s+", text)
-    summary = " ".join(sentence.strip() for sentence in sentences[:2] if sentence.strip())
-    summary = summary or text
-    if len(summary) <= limit:
-        return summary
-    return summary[: limit - 1].rstrip() + "…"
-
-
-def _fallback_answer(query: str, retrieved_chunks: list[dict[str, Any]]) -> str:
-    unique_chunks: list[dict[str, Any]] = []
-    seen_cves: set[str] = set()
-
-    for chunk in retrieved_chunks:
-        metadata = chunk.get("metadata", {})
-        if not isinstance(metadata, dict):
-            metadata = {}
-        cve_id = str(metadata.get("cve_id", "")).strip()
-        if not cve_id:
-            continue
-        normalized = _normalize_cve_id(cve_id)
-        if normalized in seen_cves:
-            continue
-        seen_cves.add(normalized)
-        unique_chunks.append(chunk)
-
-    if not unique_chunks:
-        return "The provided context does not answer the question."
-
-    query_match = CVE_ID_RE.search(query)
-    query_cve_id = _normalize_cve_id(query_match.group(0)) if query_match else ""
-    parts: list[str] = []
-    for chunk in unique_chunks[:3]:
-        metadata = chunk.get("metadata", {})
-        if not isinstance(metadata, dict):
-            metadata = {}
-        cve_id = str(metadata.get("cve_id", "")).strip()
-        evidence = _summarize_evidence(_chunk_evidence_text(chunk))
-        if not evidence:
-            continue
-        if query_cve_id and query_cve_id == _normalize_cve_id(cve_id):
-            parts.append(f"{cve_id} is described in the provided context as {evidence} [{cve_id}].")
-        else:
-            parts.append(f"{cve_id}: {evidence} [{cve_id}].")
-
-    if not parts:
-        return "The provided context does not answer the question."
-
-    if query_cve_id:
-        return " ".join(parts)
-    return "Based on the provided context, " + " ".join(parts)
 
 
 def _build_messages(query: str, context: str) -> list[dict[str, str]]:
@@ -260,10 +176,7 @@ def generate_answer(query: str, retrieved_chunks: list[dict[str, Any]]) -> dict[
             "cited_cve_ids": [],
         }
 
-    if os.getenv("OPENAI_API_KEY"):
-        answer = _call_llm(query, retrieved_chunks)
-    else:
-        answer = _fallback_answer(query, retrieved_chunks)
+    answer = _call_llm(query, retrieved_chunks)
     return {
         "answer": answer,
         "cited_cve_ids": _unique_cve_ids(answer),
