@@ -87,6 +87,28 @@ class ChunkCveRecordTests(unittest.TestCase):
         self.assertIn("console.log('hello');", chunks[1]["text"])
         self.assertIn("```", chunks[1]["text"])
 
+    def test_missing_cvss_omitted_from_chunk_text(self) -> None:
+        record = {
+            "cve_id": "CVE-TEST-0004",
+            "description": "Example vulnerability with no severity score data.",
+            "sources": ["osv"],
+            "cvss_score": None,
+            "cvss_severity": None,
+            "affected_packages": [
+                {
+                    "name": "example",
+                    "ecosystem": "PyPI",
+                    "version_ranges": [{"fixed": "1.0.0"}],
+                }
+            ],
+        }
+
+        chunks = chunk_cve_record(record)
+
+        self.assertEqual(len(chunks), 1)
+        self.assertNotIn("CVSS", chunks[0]["text"])
+        self.assertIn("CVE-TEST-0004:", chunks[0]["text"])
+
 
 if __name__ == "__main__":
     unittest.main()

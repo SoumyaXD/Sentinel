@@ -45,7 +45,7 @@ def _score_context(record: dict[str, Any]) -> str:
     severity = record.get("cvss_severity")
 
     if score is None and not severity:
-        return "CVSS unknown"
+        return ""
 
     parts: list[str] = []
     if score is not None:
@@ -56,7 +56,7 @@ def _score_context(record: dict[str, Any]) -> str:
     if severity:
         parts.append(str(severity).upper())
 
-    return "CVSS " + ", ".join(parts) if parts else "CVSS unknown"
+    return "CVSS " + ", ".join(parts) if parts else ""
 
 
 def _cleanup_text(text: str) -> str:
@@ -239,7 +239,8 @@ def _build_chunk_text(
     chunk_label: str | None = None,
 ) -> str:
     cve_id = str(record.get("cve_id", "")).strip() or "UNKNOWN-CVE"
-    prefix = f"{cve_id} ({_score_context(record)}):"
+    score_context = _score_context(record)
+    prefix = f"{cve_id} ({score_context}):" if score_context else f"{cve_id}:"
     sections = [prefix]
     if chunk_label:
         sections.append(f"{chunk_label}.")
