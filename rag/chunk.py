@@ -22,20 +22,22 @@ ALNUM_RE = re.compile(r"[^a-z0-9]+")
 
 
 def _load_normalized_records() -> list[dict[str, Any]]:
-    if not NORMALIZED_CVES_PATH.exists():
-        raise FileNotFoundError(f"Normalized CVE file not found: {NORMALIZED_CVES_PATH}")
+    if NORMALIZED_CVES_PATH.exists():
+        with NORMALIZED_CVES_PATH.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
 
-    with NORMALIZED_CVES_PATH.open("r", encoding="utf-8") as handle:
-        payload = json.load(handle)
+        if not isinstance(payload, list):
+            raise ValueError("Expected data/normalized/all_cves.json to contain a list of records")
 
-    if not isinstance(payload, list):
-        raise ValueError("Expected data/normalized/all_cves.json to contain a list of records")
+        records: list[dict[str, Any]] = []
+        for item in payload:
+            if isinstance(item, dict):
+                records.append(item)
+        return records
 
-    records: list[dict[str, Any]] = []
-    for item in payload:
-        if isinstance(item, dict):
-            records.append(item)
-    return records
+    from ingest.normalize import normalize_records
+
+    return normalize_records()
 
 
 def _score_context(record: dict[str, Any]) -> str:

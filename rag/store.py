@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import json
+import re
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-import chromadb
+try:
+    import chromadb
+except ModuleNotFoundError:  # pragma: no cover - exercised in environments without chromadb
+    chromadb = None
 
 from rag.chunk import chunk_cve_record
-from rag.embed import embed_text
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -17,25 +21,39 @@ CHROMA_DIR = REPO_ROOT / "data" / "chroma"
 NORMALIZED_CVES_PATH = REPO_ROOT / "data" / "normalized" / "all_cves.json"
 COLLECTION_NAME = "cve_chunks"
 
-CHROMA_DIR.mkdir(parents=True, exist_ok=True)
-CHROMA_CLIENT = chromadb.PersistentClient(path=str(CHROMA_DIR))
-CHROMA_COLLECTION = CHROMA_CLIENT.get_or_create_collection(
-    name=COLLECTION_NAME,
-    metadata={"hnsw:space": "cosine"},
-)
+if chromadb is not None:
+    CHROMA_DIR.mkdir(parents=True, exist_ok=True)
+    CHROMA_CLIENT = chromadb.PersistentClient(path=str(CHROMA_DIR))
+    CHROMA_COLLECTION = CHROMA_CLIENT.get_or_create_collection(
+        name=COLLECTION_NAME,
+        metadata={"hnsw:space": "cosine"},
+    )
+else:  # pragma: no cover - simple import-time fallback
+    CHROMA_CLIENT = None
+    CHROMA_COLLECTION = None
 
 
 def _load_normalized_records() -> list[dict[str, Any]]:
-    if not NORMALIZED_CVES_PATH.exists():
-        raise FileNotFoundError(f"Normalized CVE file not found: {NORMALIZED_CVES_PATH}")
+    if NORMALIZED_CVES_PATH.exists():
+        with NORMALIZED_CVES_PATH.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
 
-    with NORMALIZED_CVES_PATH.open("r", encoding="utf-8") as handle:
-        payload = json.load(handle)
+        if not isinstance(payload, list):
+            raise ValueError("Expected data/normalized/all_cves.json to contain a list of records")
 
-    if not isinstance(payload, list):
-        raise ValueError("Expected data/normalized/all_cves.json to contain a list of records")
+        return [item for item in payload if isinstance(item, dict)]
 
-    return [item for item in payload if isinstance(item, dict)]
+    from ingest.normalize import normalize_records
+
+    return normalize_records()
+
+
+@lru_cache(maxsize=1)
+def _fallback_chunks() -> list[dict[str, Any]]:
+    chunks: list[dict[str, Any]] = []
+    for record in _load_normalized_records():
+        chunks.extend(chunk_cve_record(record))
+    return chunks
 
 
 def _chunk_id(chunk: dict[str, Any], index: int) -> str:
@@ -59,7 +77,40 @@ def _stored_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in stored.items() if value not in (None, "", [])}
 
 
+def _search_text(chunk: dict[str, Any]) -> str:
+    metadata = chunk.get("metadata", {})
+    if not isinstance(metadata, dict):
+        metadata = {}
+
+    affected_packages = metadata.get("affected_packages", [])
+    package_names: list[str] = []
+    if isinstance(affected_packages, list):
+        for package in affected_packages:
+            if not isinstance(package, dict):
+                continue
+            name = str(package.get("name", "")).strip()
+            ecosystem = str(package.get("ecosystem", "")).strip()
+            if name:
+                package_names.append(name)
+            if ecosystem:
+                package_names.append(ecosystem)
+
+    parts = [
+        str(chunk.get("text", "")),
+        str(metadata.get("cve_id", "")),
+        str(metadata.get("chunk_type", "")),
+        str(metadata.get("cvss_score", "")),
+        str(metadata.get("cvss_severity", "")),
+        " ".join(package_names),
+    ]
+    return " ".join(part for part in parts if part).strip()
+
+
 def add_chunks(chunks: list[dict[str, Any]]) -> int:
+    if chromadb is None:
+        raise RuntimeError("chromadb is not installed; persistent store embedding is unavailable")
+    from rag.embed import embed_text
+
     if not chunks:
         return 0
 
@@ -90,6 +141,38 @@ def add_chunks(chunks: list[dict[str, Any]]) -> int:
 
 
 def query(text: str, k: int = 5) -> list[dict[str, Any]]:
+    if chromadb is None:
+        try:
+            from sklearn.feature_extraction.text import TfidfVectorizer
+            from sklearn.metrics.pairwise import cosine_similarity
+        except ModuleNotFoundError as exc:  # pragma: no cover - only in very small environments
+            raise RuntimeError("scikit-learn is required for fallback semantic search") from exc
+
+        chunks = _fallback_chunks()
+        if not chunks:
+            return []
+
+        corpus = [_search_text(chunk) for chunk in chunks]
+        vectorizer = TfidfVectorizer(stop_words="english", ngram_range=(1, 2))
+        matrix = vectorizer.fit_transform(corpus + [text])
+        similarities = cosine_similarity(matrix[:-1], matrix[-1]).ravel()
+        ranked = sorted(enumerate(similarities), key=lambda item: item[1], reverse=True)[:k]
+
+        output: list[dict[str, Any]] = []
+        for index, similarity in ranked:
+            chunk = chunks[index]
+            distance = 1.0 - float(similarity)
+            output.append(
+                {
+                    "id": _chunk_id(chunk, index),
+                    "text": chunk.get("text", ""),
+                    "metadata": chunk.get("metadata", {}),
+                    "distance": distance,
+                    "similarity": float(similarity),
+                }
+            )
+        return output
+
     query_embedding = embed_text(text)
     results = CHROMA_COLLECTION.query(
         query_embeddings=[query_embedding],
@@ -134,11 +217,7 @@ def query(text: str, k: int = 5) -> list[dict[str, Any]]:
 
 
 def _build_all_chunks() -> list[dict[str, Any]]:
-    records = _load_normalized_records()
-    chunks: list[dict[str, Any]] = []
-    for record in records:
-        chunks.extend(chunk_cve_record(record))
-    return chunks
+    return _fallback_chunks()
 
 
 def main() -> None:

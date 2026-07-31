@@ -24,19 +24,25 @@ def _normalize_cve_id(value: str) -> str:
 
 @lru_cache(maxsize=1)
 def _normalized_record_index() -> dict[str, dict[str, Any]]:
-    if not NORMALIZED_CVES_PATH.exists():
-        raise FileNotFoundError(f"Normalized CVE file not found: {NORMALIZED_CVES_PATH}")
-
-    with NORMALIZED_CVES_PATH.open("r", encoding="utf-8") as handle:
-        payload = json.load(handle)
-
-    if not isinstance(payload, list):
-        raise ValueError("Expected data/normalized/all_cves.json to contain a list of records")
-
     index: dict[str, dict[str, Any]] = {}
-    for item in payload:
-        if not isinstance(item, dict):
-            continue
+    if NORMALIZED_CVES_PATH.exists():
+        with NORMALIZED_CVES_PATH.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+
+        if not isinstance(payload, list):
+            raise ValueError("Expected data/normalized/all_cves.json to contain a list of records")
+
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            cve_id = item.get("cve_id")
+            if isinstance(cve_id, str) and cve_id:
+                index[_normalize_cve_id(cve_id)] = item
+        return index
+
+    from ingest.normalize import normalize_records
+
+    for item in normalize_records():
         cve_id = item.get("cve_id")
         if isinstance(cve_id, str) and cve_id:
             index[_normalize_cve_id(cve_id)] = item
