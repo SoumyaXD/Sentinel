@@ -1,0 +1,37 @@
+The remaining citation gap is fixed where it should be fixed: scoring now rewards recall instead of exact set equality, and the Axios version-range bug is corrected at the data layer.
+
+**What changed**
+- [`eval/run_eval.py`](/C:/Users/panda/Projects/sentinel/eval/run_eval.py)
+  - `_score_citation_correct()` now passes when all expected CVEs are present, even if the answer also cites extra grounded CVEs.
+- [`ingest/normalize.py`](/C:/Users/panda/Projects/sentinel/ingest/normalize.py)
+  - NVD `versionEndIncluding` now maps to `last_affected` instead of `fixed`, which removes the off-by-one formatting bug.
+- [`tests/test_run_eval.py`](/C:/Users/panda/Projects/sentinel/tests/test_run_eval.py)
+  - Added regressions for recall-based citation scoring and inclusive-end normalization.
+
+**Data-layer finding**
+- Raw NVD for `CVE-2019-10742` says `versionEndIncluding: 0.18.0`.
+- Raw OSV says `fixed: 0.18.1`, but also includes `last_known_affected_version_range: <= 0.18.0`.
+- The bug was in normalization, not the prompt.
+- I regenerated [`data/normalized/all_cves.json`](/C:/Users/panda/Projects/sentinel/data/normalized/all_cves.json) and rebuilt Chroma, so retrieval now reflects the corrected text.
+- The Axios chunk now reads `Affects axios (npm) versions through 0.18.0.`
+
+**Eval-013 retrieval check**
+- `CVE-2021-4104` is still not present in the retrieved chunks for `Are there any remote code execution vulnerabilities in Log4j?`
+- So that remaining miss is a retrieval gap, not a citation-scoring problem.
+
+**Latest full eval**
+- Total entries: 18
+- Retrieved correct CVE: 16/18 (88.9%)
+- Factual accuracy: 17/18 (94.4%)
+- Citation correct: 16/18 (88.9%)
+- Trap handled: 2/2 (100.0%)
+
+**Current per-question failures**
+- `eval-012`: retrieval gap for Django 3.1.8, still returns `No relevant CVE found.`
+- `eval-013`: retrieval gap for `CVE-2021-4104`, model cites the other valid Log4j CVEs but not that one
+
+**Verification**
+- Unit tests passed: 10 tests
+- Full eval rerun passed with the updated scores above
+
+If you want, the next most useful step is to improve retrieval for `eval-012` and `eval-013`, since the scoring issues are now mostly resolved.

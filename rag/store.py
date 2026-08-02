@@ -3,15 +3,16 @@
 from __future__ import annotations
 
 import json
-import re
-from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 try:
     import chromadb
-except ModuleNotFoundError:  # pragma: no cover - exercised in environments without chromadb
+except ModuleNotFoundError as exc:  # pragma: no cover - environment failure path
     chromadb = None
+    CHROMADB_IMPORT_ERROR = exc
+else:
+    CHROMADB_IMPORT_ERROR = None
 
 from rag.chunk import chunk_cve_record
 
@@ -48,14 +49,6 @@ def _load_normalized_records() -> list[dict[str, Any]]:
     return normalize_records()
 
 
-@lru_cache(maxsize=1)
-def _fallback_chunks() -> list[dict[str, Any]]:
-    chunks: list[dict[str, Any]] = []
-    for record in _load_normalized_records():
-        chunks.extend(chunk_cve_record(record))
-    return chunks
-
-
 def _chunk_id(chunk: dict[str, Any], index: int) -> str:
     metadata = chunk.get("metadata", {})
     cve_id = str(metadata.get("cve_id", "unknown_cve")).strip() or "unknown_cve"
@@ -77,38 +70,13 @@ def _stored_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in stored.items() if value not in (None, "", [])}
 
 
-def _search_text(chunk: dict[str, Any]) -> str:
-    metadata = chunk.get("metadata", {})
-    if not isinstance(metadata, dict):
-        metadata = {}
-
-    affected_packages = metadata.get("affected_packages", [])
-    package_names: list[str] = []
-    if isinstance(affected_packages, list):
-        for package in affected_packages:
-            if not isinstance(package, dict):
-                continue
-            name = str(package.get("name", "")).strip()
-            ecosystem = str(package.get("ecosystem", "")).strip()
-            if name:
-                package_names.append(name)
-            if ecosystem:
-                package_names.append(ecosystem)
-
-    parts = [
-        str(chunk.get("text", "")),
-        str(metadata.get("cve_id", "")),
-        str(metadata.get("chunk_type", "")),
-        str(metadata.get("cvss_score", "")),
-        str(metadata.get("cvss_severity", "")),
-        " ".join(package_names),
-    ]
-    return " ".join(part for part in parts if part).strip()
-
-
 def add_chunks(chunks: list[dict[str, Any]]) -> int:
     if chromadb is None:
-        raise RuntimeError("chromadb is not installed; persistent store embedding is unavailable")
+        raise RuntimeError(
+            "chromadb is not installed in the active Python environment; "
+            "persistent store embedding is unavailable. Run with the project venv "
+            r".\venv\Scripts\python.exe or install the repository requirements."
+        ) from CHROMADB_IMPORT_ERROR
     from rag.embed import embed_text
 
     if not chunks:
@@ -142,36 +110,13 @@ def add_chunks(chunks: list[dict[str, Any]]) -> int:
 
 def query(text: str, k: int = 5) -> list[dict[str, Any]]:
     if chromadb is None:
-        try:
-            from sklearn.feature_extraction.text import TfidfVectorizer
-            from sklearn.metrics.pairwise import cosine_similarity
-        except ModuleNotFoundError as exc:  # pragma: no cover - only in very small environments
-            raise RuntimeError("scikit-learn is required for fallback semantic search") from exc
+        raise RuntimeError(
+            "Chroma vector store is unavailable because chromadb cannot be imported "
+            "from the active Python environment. Semantic retrieval requires the real "
+            f"Chroma store at {CHROMA_DIR}; no TF-IDF fallback was used."
+        ) from CHROMADB_IMPORT_ERROR
 
-        chunks = _fallback_chunks()
-        if not chunks:
-            return []
-
-        corpus = [_search_text(chunk) for chunk in chunks]
-        vectorizer = TfidfVectorizer(stop_words="english", ngram_range=(1, 2))
-        matrix = vectorizer.fit_transform(corpus + [text])
-        similarities = cosine_similarity(matrix[:-1], matrix[-1]).ravel()
-        ranked = sorted(enumerate(similarities), key=lambda item: item[1], reverse=True)[:k]
-
-        output: list[dict[str, Any]] = []
-        for index, similarity in ranked:
-            chunk = chunks[index]
-            distance = 1.0 - float(similarity)
-            output.append(
-                {
-                    "id": _chunk_id(chunk, index),
-                    "text": chunk.get("text", ""),
-                    "metadata": chunk.get("metadata", {}),
-                    "distance": distance,
-                    "similarity": float(similarity),
-                }
-            )
-        return output
+    from rag.embed import embed_text
 
     query_embedding = embed_text(text)
     results = CHROMA_COLLECTION.query(
@@ -210,6 +155,7 @@ def query(text: str, k: int = 5) -> list[dict[str, Any]]:
                 "metadata": parsed_metadata,
                 "distance": distance,
                 "similarity": similarity,
+                "retrieval_method": "CHROMA-VECTOR-STORE",
             }
         )
 
@@ -217,7 +163,11 @@ def query(text: str, k: int = 5) -> list[dict[str, Any]]:
 
 
 def _build_all_chunks() -> list[dict[str, Any]]:
-    return _fallback_chunks()
+    records = _load_normalized_records()
+    chunks: list[dict[str, Any]] = []
+    for record in records:
+        chunks.extend(chunk_cve_record(record))
+    return chunks
 
 
 def main() -> None:

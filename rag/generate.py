@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import logging
 from typing import Any
 
 import httpx
@@ -15,7 +16,9 @@ from rag.retriever import retrieve
 
 load_dotenv()
 
-CVE_ID_RE = re.compile(r"CVE-\d{4}-\d+", re.IGNORECASE)
+logger = logging.getLogger(__name__)
+
+BRACKET_CVE_CITATION_RE = re.compile(r"\[(CVE-\d{4}-\d+)\]", re.IGNORECASE)
 DEFAULT_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
 
@@ -26,13 +29,57 @@ def _normalize_cve_id(value: str) -> str:
 def _unique_cve_ids(text: str) -> list[str]:
     seen: set[str] = set()
     ordered: list[str] = []
-    for match in CVE_ID_RE.findall(text):
+    for match in BRACKET_CVE_CITATION_RE.findall(text):
         normalized = _normalize_cve_id(match)
         if normalized in seen:
             continue
         seen.add(normalized)
         ordered.append(normalized)
     return ordered
+
+
+def _retrieved_context_cve_ids(retrieved_chunks: list[dict[str, Any]]) -> set[str]:
+    context_cve_ids: set[str] = set()
+    for chunk in retrieved_chunks:
+        if not isinstance(chunk, dict):
+            continue
+        metadata = chunk.get("metadata", {})
+        if not isinstance(metadata, dict):
+            continue
+        cve_id = metadata.get("cve_id")
+        if isinstance(cve_id, str) and cve_id.strip():
+            context_cve_ids.add(_normalize_cve_id(cve_id))
+    return context_cve_ids
+
+
+def _filter_cited_cve_ids(
+    cited_cve_ids: list[str],
+    retrieved_chunks: list[dict[str, Any]],
+    *,
+    query: str,
+) -> list[str]:
+    context_cve_ids = _retrieved_context_cve_ids(retrieved_chunks)
+    if not context_cve_ids:
+        return []
+
+    valid_cited_ids: list[str] = []
+    invalid_cited_ids: list[str] = []
+
+    for cve_id in cited_cve_ids:
+        normalized = _normalize_cve_id(cve_id)
+        if normalized in context_cve_ids:
+            valid_cited_ids.append(normalized)
+        else:
+            invalid_cited_ids.append(normalized)
+
+    if invalid_cited_ids:
+        logger.warning(
+            "Dropping CVE citation(s) not present in retrieved context for query %r: %s",
+            query,
+            ", ".join(invalid_cited_ids),
+        )
+
+    return valid_cited_ids
 
 
 
@@ -97,9 +144,21 @@ def _build_messages(query: str, context: str) -> list[dict[str, str]]:
     system_prompt = (
         "You are a security assistant answering questions about CVEs.\n"
         "Answer ONLY using the provided CVE context below. Do not use outside knowledge or guess.\n"
-        "Cite the specific CVE ID(s) actually used in every answer.\n"
+        "You must NEVER mention or cite any CVE ID that does not appear verbatim in the CONTEXT section above, even if you recognize it from other knowledge.\n"
+        "If you are not fully confident a CVE ID appears in the provided context, do not include it.\n"
+        "Whenever you state that a specific CVE applies to the question being asked, you MUST wrap that CVE ID in square brackets in this exact format: [CVE-YYYY-NNNN], immediately after mentioning it in your answer.\n"
+        "This applies EVERY time you assert a CVE is relevant, not just once, and not only in a separate citations list.\n"
+        "Do not write a bare CVE ID by itself as a citation; the bracketed form is required for every asserted CVE mention.\n"
+        "Example of CORRECT format: CVE-2020-28500 [CVE-2020-28500] is a ReDoS vulnerability affecting lodash.\n"
+        "Do NOT use bracket format when explaining that a CVE does NOT apply to the question.\n"
+        "If the question asks about an exact version, only cite CVEs whose affected-version range actually includes that exact version.\n"
+        "If a retrieved CVE does not apply to the asked version, state that explicitly instead of citing it.\n"
+        "Always include the CVSS score and severity for every CVE you cite, unless the provided context genuinely has no CVSS for that record.\n"
+        "If the context contains multiple CVEs that are genuinely relevant to the question, synthesize them all into one answer instead of refusing to answer.\n"
+        "Do not say 'No relevant CVE found.' merely because some retrieved CVEs are irrelevant or because you are seeing more than one candidate.\n"
+        "Only say 'No relevant CVE found.' when none of the retrieved CVEs actually apply to the question.\n"
+        "If no relevant CVE applies, say exactly 'No relevant CVE found.'\n"
         "If the provided context does not actually answer the question, say so explicitly rather than forcing an answer.\n"
-        "When you do answer, include inline citations in the form [CVE-YYYY-NNNN] for every factual claim.\n"
         "Keep the answer concise and grounded in the evidence."
     )
 
@@ -109,8 +168,60 @@ def _build_messages(query: str, context: str) -> list[dict[str, str]]:
         "Respond with a grounded answer using only the context."
     )
 
+    example_user_prompt = (
+        "Question:\nWhat is CVE-2020-28500?\n\n"
+        "Provided CVE context:\n"
+        "[Chunk 1] CVE ID: CVE-2020-28500\n"
+        "Chunk type: full\n"
+        "Evidence:\n"
+        "CVE-2020-28500 (CVSS 5.3, MEDIUM): lodash is vulnerable to regular expression denial of service.\n\n"
+        "Respond with a grounded answer using only the context."
+    )
+    example_assistant_response = (
+        "CVE-2020-28500 [CVE-2020-28500] is a ReDoS vulnerability affecting lodash. "
+        "It has CVSS 5.3 and is MEDIUM severity."
+    )
+
+    example_user_prompt_2 = (
+        "Question:\nWhat is CVE-2008-2302?\n\n"
+        "Provided CVE context:\n"
+        "[Chunk 1] CVE ID: CVE-2008-2302\n"
+        "Chunk type: full\n"
+        "Evidence:\n"
+        "CVE-2008-2302 (CVSS 4.3, MEDIUM): Django login form XSS vulnerability.\n\n"
+        "Respond with a grounded answer using only the context."
+    )
+    example_assistant_response_2 = (
+        "CVE-2008-2302 [CVE-2008-2302] is a Django login form XSS vulnerability. "
+        "It has CVSS 4.3 and is MEDIUM severity."
+    )
+
+    example_user_prompt_3 = (
+        "Question:\nAre there any remote code execution vulnerabilities in OpenSSL?\n\n"
+        "Provided CVE context:\n"
+        "[Chunk 1] CVE ID: CVE-2002-0656\n"
+        "Chunk type: full\n"
+        "Evidence:\n"
+        "CVE-2002-0656 (CVSS 7.5, HIGH): Buffer overflows in OpenSSL allow remote attackers to execute arbitrary code.\n\n"
+        "---\n\n"
+        "[Chunk 2] CVE ID: CVE-2007-5135\n"
+        "Chunk type: full\n"
+        "Evidence:\n"
+        "CVE-2007-5135 (CVSS 6.8, MEDIUM): Off-by-one error in OpenSSL might allow remote attackers to execute arbitrary code.\n\n"
+        "Respond with a grounded answer using only the context."
+    )
+    example_assistant_response_3 = (
+        "Yes. CVE-2002-0656 [CVE-2002-0656] is a HIGH-severity remote code execution issue in OpenSSL with CVSS 7.5, and CVE-2007-5135 [CVE-2007-5135] is a MEDIUM-severity issue with CVSS 6.8 that might allow arbitrary code execution."
+    )
+
     return [
         {"role": "system", "content": system_prompt},
+        {"role": "user", "content": example_user_prompt},
+        {"role": "assistant", "content": example_assistant_response},
+        {"role": "user", "content": example_user_prompt_2},
+        {"role": "assistant", "content": example_assistant_response_2},
+        {"role": "user", "content": example_user_prompt_3},
+        {"role": "assistant", "content": example_assistant_response_3},
         {"role": "user", "content": user_prompt},
     ]
 
@@ -170,9 +281,11 @@ def generate_answer(query: str, retrieved_chunks: list[dict[str, Any]]) -> dict[
         }
 
     answer = _call_llm(query, retrieved_chunks)
+    cited_cve_ids = _unique_cve_ids(answer)
+    cited_cve_ids = _filter_cited_cve_ids(cited_cve_ids, retrieved_chunks, query=query)
     return {
         "answer": answer,
-        "cited_cve_ids": _unique_cve_ids(answer),
+        "cited_cve_ids": cited_cve_ids,
     }
 
 

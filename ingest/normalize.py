@@ -177,10 +177,11 @@ def _nvd_version_range(cpe_match: dict[str, Any]) -> dict[str, str] | None:
         return None
 
     introduced = cpe_match.get("versionStartIncluding") or cpe_match.get("versionStartExcluding")
-    fixed = cpe_match.get("versionEndExcluding") or cpe_match.get("versionEndIncluding")
+    fixed = cpe_match.get("versionEndExcluding")
+    last_affected = cpe_match.get("versionEndIncluding")
 
     criteria = str(cpe_match.get("criteria", "")).strip()
-    if not introduced and not fixed:
+    if not introduced and not fixed and not last_affected:
         parts = criteria.split(":")
         if len(parts) > 5 and parts[5] not in {"*", "-"}:
             version = parts[5]
@@ -192,6 +193,8 @@ def _nvd_version_range(cpe_match: dict[str, Any]) -> dict[str, str] | None:
         range_record["introduced"] = str(introduced)
     if fixed:
         range_record["fixed"] = str(fixed)
+    if last_affected:
+        range_record["last_affected"] = str(last_affected)
     return range_record or None
 
 

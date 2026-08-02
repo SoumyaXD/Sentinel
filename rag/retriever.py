@@ -137,7 +137,7 @@ def _semantic_retrieve(query: str, k: int) -> list[dict[str, Any]]:
     return _rerank_package_results(candidate_results, packages, k)
 
 
-def retrieve(query: str, k: int = 5) -> list[dict[str, Any]]:
+def retrieve(query: str, k: int = 8) -> list[dict[str, Any]]:
     """
     Retrieve chunks for a query.
 
@@ -152,7 +152,7 @@ def retrieve(query: str, k: int = 5) -> list[dict[str, Any]]:
     return _semantic_retrieve(query, k)
 
 
-def _print_query(label: str, query: str, k: int = 5) -> None:
+def _print_query(label: str, query: str, k: int = 8) -> None:
     print(f"Query: {label}")
     results = retrieve(query, k=k)
     print(json.dumps(results, indent=2, ensure_ascii=False))

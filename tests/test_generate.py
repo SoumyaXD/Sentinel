@@ -38,6 +38,55 @@ class GenerateAnswerTests(unittest.TestCase):
         self.assertEqual(result["cited_cve_ids"], ["CVE-2020-28500"])
         self.assertIn("[CVE-2020-28500]", result["answer"])
 
+    def test_only_bracket_citations_are_counted(self) -> None:
+        retrieved_chunks = [
+            {
+                "text": "CVE-2020-28500 affects lodash.",
+                "metadata": {
+                    "cve_id": "CVE-2020-28500",
+                    "chunk_type": "full",
+                    "cvss_score": 7.5,
+                    "cvss_severity": "HIGH",
+                    "affected_packages": [],
+                },
+            }
+        ]
+
+        with patch(
+            "rag.generate._call_llm",
+            return_value=(
+                "CVE-2020-28500 is relevant in prose, but only [CVE-2020-28500] should count. "
+                "CVE-1999-0001 is not relevant."
+            ),
+        ):
+            result = generate_answer("What is CVE-2020-28500?", retrieved_chunks)
+
+        self.assertEqual(result["cited_cve_ids"], ["CVE-2020-28500"])
+
+    def test_citations_not_present_in_context_are_filtered(self) -> None:
+        retrieved_chunks = [
+            {
+                "text": "CVE-2020-28500 affects lodash.",
+                "metadata": {
+                    "cve_id": "CVE-2020-28500",
+                    "chunk_type": "full",
+                    "cvss_score": 7.5,
+                    "cvss_severity": "HIGH",
+                    "affected_packages": [],
+                },
+            }
+        ]
+
+        with patch(
+            "rag.generate._call_llm",
+            return_value=(
+                "The grounded answer cites [CVE-2020-28500] and an out-of-context citation [CVE-2026-4800]."
+            ),
+        ):
+            result = generate_answer("What is CVE-2020-28500?", retrieved_chunks)
+
+        self.assertEqual(result["cited_cve_ids"], ["CVE-2020-28500"])
+
     def test_missing_cvss_score_is_omitted_from_context(self) -> None:
         chunk = {
             "text": "CVE-2008-2302 affects a library described in the record.",

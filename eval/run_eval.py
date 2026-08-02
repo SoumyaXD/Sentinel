@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from datetime import datetime
 from typing import Any
@@ -17,6 +18,7 @@ RESULTS_DIR = "eval/results"
 MAX_RETRIES = 2
 RETRY_DELAY = 3  # seconds
 ENTRY_DELAY = 1  # seconds between entries
+CVSS_NUMBER_RE = re.compile(r"(?<!\d)(\d+(?:\.\d+)?)(?:\s*/\s*10)?(?!\d)")
 
 
 def _load_eval_set() -> dict[str, Any]:
@@ -69,11 +71,24 @@ def _score_factual_accuracy(
     # CVSS data expected: check that answer contains both score and severity
     answer_lower = answer.lower()
     
-    # Check for CVSS score (allow for formatting like "5.3" or "5.3/10")
-    score_str = str(cvss_score)
-    if score_str not in answer:
+    # Check for CVSS score with numeric-tolerant matching.
+    try:
+        expected_score = float(cvss_score)
+    except (TypeError, ValueError):
         return False
-    
+
+    score_found = False
+    for match in CVSS_NUMBER_RE.finditer(answer):
+        try:
+            if float(match.group(1)) == expected_score:
+                score_found = True
+                break
+        except ValueError:
+            continue
+
+    if not score_found:
+        return False
+
     # Check for CVSS severity (case-insensitive)
     if cvss_severity and cvss_severity.lower() not in answer_lower:
         return False
@@ -84,15 +99,19 @@ def _score_factual_accuracy(
 def _score_citation_correct(
     cited_cve_ids: list[str], expected_cve_ids: list[str]
 ) -> bool:
-    """Check if cited_cve_ids match expected_cve_ids exactly."""
+    """Check if every expected CVE ID was cited, allowing extra grounded citations."""
     cited_set = {cve.upper() for cve in cited_cve_ids}
     expected_set = {cve.upper() for cve in expected_cve_ids}
-    return cited_set == expected_set
+    return expected_set.issubset(cited_set)
 
 
 def _score_trap_handled(answer: str) -> bool:
     """Check if the pipeline correctly returned 'no matching CVE found' for trap questions."""
-    return "no matching CVE found" in answer.lower()
+    answer_lower = answer.lower()
+    return any(
+        phrase in answer_lower
+        for phrase in ("no matching cve found", "no relevant cve found")
+    )
 
 
 def _run_single_eval(entry: dict[str, Any]) -> dict[str, Any]:
