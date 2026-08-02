@@ -16,7 +16,7 @@ from rag.retriever import retrieve
 load_dotenv()
 
 CVE_ID_RE = re.compile(r"CVE-\d{4}-\d+", re.IGNORECASE)
-DEFAULT_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
+DEFAULT_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
 
 def _normalize_cve_id(value: str) -> str:
@@ -93,7 +93,7 @@ def _build_context(retrieved_chunks: list[dict[str, Any]]) -> str:
     return "\n\n---\n\n".join(formatted_chunks)
 
 
-def _build_messages(query: str, context: str) -> tuple[str, str]:
+def _build_messages(query: str, context: str) -> list[dict[str, str]]:
     system_prompt = (
         "You are a security assistant answering questions about CVEs.\n"
         "Answer ONLY using the provided CVE context below. Do not use outside knowledge or guess.\n"
@@ -109,54 +109,50 @@ def _build_messages(query: str, context: str) -> tuple[str, str]:
         "Respond with a grounded answer using only the context."
     )
 
-    return system_prompt, user_prompt
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
 
 
 def _extract_message_content(payload: dict[str, Any]) -> str:
-    candidates = payload.get("candidates", [])
-    if not isinstance(candidates, list) or not candidates:
-        raise RuntimeError("Gemini response did not include any candidates")
+    choices = payload.get("choices", [])
+    if not isinstance(choices, list) or not choices:
+        raise RuntimeError("OpenAI response did not include any choices")
 
-    content = candidates[0].get("content", {})
-    if not isinstance(content, dict):
-        raise RuntimeError("Gemini response missing content")
+    message = choices[0].get("message", {})
+    if not isinstance(message, dict):
+        raise RuntimeError("OpenAI response missing message")
 
-    parts = content.get("parts", [])
-    if not isinstance(parts, list) or not parts:
-        raise RuntimeError("Gemini response missing parts")
+    content = message.get("content", "")
+    if isinstance(content, str):
+        return content.strip()
 
-    text = parts[0].get("text", "")
-    if isinstance(text, str):
-        return text.strip()
-
-    return str(text).strip()
+    return str(content).strip()
 
 
 def _call_llm(query: str, retrieved_chunks: list[dict[str, Any]]) -> str:
-    api_key = os.getenv("GEMINI_API_KEY")
+    api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
-        raise RuntimeError("GEMINI_API_KEY is required to generate grounded answers. Get a free key at https://aistudio.google.com/apikey")
+        raise RuntimeError("OPENAI_API_KEY is required to generate grounded answers. Get a key at https://platform.openai.com/api-keys")
+
+    base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
 
     context = _build_context(retrieved_chunks)
-    system_prompt, user_prompt = _build_messages(query, context)
+    messages = _build_messages(query, context)
     payload = {
-        "contents": [{
-            "parts": [{"text": user_prompt}]
-        }],
-        "systemInstruction": {
-            "parts": [{"text": system_prompt}]
-        },
-        "generationConfig": {
-            "temperature": 0,
-            "maxOutputTokens": 2000,
-        }
+        "model": DEFAULT_MODEL,
+        "messages": messages,
+        "temperature": 0,
+        "max_tokens": 500,
     }
 
     with httpx.Client(timeout=60.0) as client:
         response = client.post(
-            f"https://generativelanguage.googleapis.com/v1beta/models/{DEFAULT_MODEL}:generateContent?key={api_key}",
+            f"{base_url}/chat/completions",
             headers={
                 "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
             },
             json=payload,
         )

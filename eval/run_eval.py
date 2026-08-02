@@ -14,7 +14,7 @@ from rag.retriever import retrieve
 
 EVAL_SET_PATH = "eval/eval_set.json"
 RESULTS_DIR = "eval/results"
-MAX_RETRIES = 10
+MAX_RETRIES = 2
 RETRY_DELAY = 3  # seconds
 ENTRY_DELAY = 1  # seconds between entries
 
@@ -45,18 +45,40 @@ def _score_retrieved_correct_cve(
 
 def _score_factual_accuracy(
     answer: str, expected_facts: dict[str, Any]
-) -> bool | str:
+) -> bool:
     """
     Check if the generated answer's stated facts match expected_facts.
-    Returns True if accurate, False if inaccurate, or "skipped" if expected_facts
-    is not populated for manual verification.
+    Returns True if accurate, False if inaccurate.
     """
-    if not expected_facts or expected_facts.get("status") == "NEEDS MANUAL VERIFICATION":
-        return "skipped"
+    # Trap question case: expected_facts is None/empty
+    if not expected_facts:
+        return True
     
-    # TODO: Implement actual fact comparison when expected_facts is populated
-    # For now, since eval_set.json has placeholder expected_facts, we skip this check
-    return "skipped"
+    cvss_score = expected_facts.get("cvss_score")
+    cvss_severity = expected_facts.get("cvss_severity")
+    
+    # Missing CVSS case: check that answer does NOT fabricate a CVSS score
+    if cvss_score is None and cvss_severity is None:
+        # Check if answer contains "CVSS" followed by a number (hallucinated score)
+        import re
+        cvss_pattern = re.compile(r"CVSS.*?\d", re.IGNORECASE)
+        if cvss_pattern.search(answer):
+            return False
+        return True
+    
+    # CVSS data expected: check that answer contains both score and severity
+    answer_lower = answer.lower()
+    
+    # Check for CVSS score (allow for formatting like "5.3" or "5.3/10")
+    score_str = str(cvss_score)
+    if score_str not in answer:
+        return False
+    
+    # Check for CVSS severity (case-insensitive)
+    if cvss_severity and cvss_severity.lower() not in answer_lower:
+        return False
+    
+    return True
 
 
 def _score_citation_correct(
@@ -137,11 +159,7 @@ def _print_results_table(results: list[dict[str, Any]]) -> None:
         
         # Format metric status
         ret_cve = "PASS" if metrics["retrieved_correct_cve"] else "FAIL"
-        fact_acc = metrics["factual_accuracy"]
-        if fact_acc == "skipped":
-            fact_acc_str = "SKIP"
-        else:
-            fact_acc_str = "PASS" if fact_acc else "FAIL"
+        fact_acc_str = "PASS" if metrics["factual_accuracy"] else "FAIL"
         cit_corr = "PASS" if metrics["citation_correct"] else "FAIL"
         
         if metrics["trap_handled"] is not None:
@@ -171,14 +189,7 @@ def _print_summary(results: list[dict[str, Any]]) -> None:
     # Count passes for each metric
     retrieved_correct = sum(1 for r in results if r["metrics"]["retrieved_correct_cve"])
     citation_correct = sum(1 for r in results if r["metrics"]["citation_correct"])
-    
-    # Factual accuracy (excluding skipped)
-    factual_results = [r for r in results if r["metrics"]["factual_accuracy"] != "skipped"]
-    if factual_results:
-        factual_correct = sum(1 for r in factual_results if r["metrics"]["factual_accuracy"])
-        factual_pct = (factual_correct / len(factual_results)) * 100
-    else:
-        factual_pct = 0.0
+    factual_correct = sum(1 for r in results if r["metrics"]["factual_accuracy"])
     
     # Trap handling (only for trap questions)
     trap_results = [r for r in results if r["metrics"]["trap_handled"] is not None]
@@ -190,25 +201,28 @@ def _print_summary(results: list[dict[str, Any]]) -> None:
     
     retrieved_pct = (retrieved_correct / total) * 100
     citation_pct = (citation_correct / total) * 100
+    factual_pct = (factual_correct / total) * 100
     
     print(f"Total entries: {total}")
     print(f"Retrieved correct CVE: {retrieved_correct}/{total} ({retrieved_pct:.1f}%)")
-    print(f"Factual accuracy: {len(factual_results)} scored, {factual_pct:.1f}% (others skipped due to unverified expected_facts)")
+    print(f"Factual accuracy: {factual_correct}/{total} ({factual_pct:.1f}%)")
     print(f"Citation correct: {citation_correct}/{total} ({citation_pct:.1f}%)")
     print(f"Trap handled: {trap_correct}/{len(trap_results)} ({trap_pct:.1f}%)")
     print()
 
 
-def _save_results(results: list[dict[str, Any]]) -> str:
-    """Save full results to a timestamped JSON file."""
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"run_{timestamp}.json"
-    filepath = os.path.join(RESULTS_DIR, filename)
+def _save_results(results: list[dict[str, Any]], total_entries: int, filepath: str | None = None) -> str:
+    """Save results to a JSON file (incremental or final)."""
+    if filepath is None:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"run_{timestamp}.json"
+        filepath = os.path.join(RESULTS_DIR, filename)
     
     output = {
         "generated_at": datetime.now().isoformat(),
         "eval_set_path": EVAL_SET_PATH,
-        "total_entries": len(results),
+        "total_entries": total_entries,
+        "completed_entries": len(results),
         "results": results,
     }
     
@@ -222,24 +236,29 @@ def main() -> None:
     print("Loading evaluation set...")
     eval_set = _load_eval_set()
     entries = eval_set.get("entries", [])
+    total_entries = len(entries)
     
-    print(f"Running evaluation on {len(entries)} entries...")
+    print(f"Running evaluation on {total_entries} entries...")
     results = []
+    results_filepath = None
     
     for i, entry in enumerate(entries, 1):
-        print(f"\n[{i}/{len(entries)}] Processing {entry['id']}...")
+        print(f"\n[{i}/{total_entries}] Processing {entry['id']}...")
         result = _run_single_eval(entry)
         results.append(result)
         
+        # Save results incrementally after each entry
+        results_filepath = _save_results(results, total_entries, results_filepath)
+        print(f"  -> Progress saved ({len(results)}/{total_entries} complete)")
+        
         # Add delay between entries to avoid rate limiting
-        if i < len(entries):
+        if i < total_entries:
             time.sleep(ENTRY_DELAY)
     
     _print_results_table(results)
     _print_summary(results)
     
-    filepath = _save_results(results)
-    print(f"Full results saved to: {filepath}")
+    print(f"Final results saved to: {results_filepath}")
 
 
 if __name__ == "__main__":
