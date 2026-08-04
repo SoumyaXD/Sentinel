@@ -4,11 +4,9 @@ This document describes how Sentinel's Stage A pipeline is structured: what each
 component does, how data flows through the system, and why each piece was built
 the way it was.
 
-For the staged v1/v2 roadmap and design rationale, see [`PRD.md`](PRD.md).
 For a full checkpoint-by-checkpoint account of how this was built (including
 every bug found and fixed), see [`BUILD_LOG.md`](BUILD_LOG.md).
 
----
 
 ## System overview
 

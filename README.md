@@ -11,7 +11,6 @@ Example: *"What CVEs affect lodash version 4.17.10?"* → Sentinel retrieves
 the actual matching CVE records, and answers with the correct CVSS scores,
 affected-version ranges, and a citation for every claim.
 
----
 
 ## Status
 
@@ -52,7 +51,6 @@ reasoning in [`docs/BUILD_LOG.md`](docs/BUILD_LOG.md).
 
 See [`docs/PRD.md`](docs/PRD.md) for the full staged roadmap.
 
----
 
 ## Quick start
 
@@ -92,7 +90,6 @@ Run tests:
 python -m unittest discover -s tests
 ```
 
----
 
 ## Documentation
 
