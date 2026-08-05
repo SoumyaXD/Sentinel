@@ -32,6 +32,10 @@ joblib==1.5.3
 jsonschema==4.26.0
 jsonschema-specifications==2025.9.1
 kubernetes==36.0.3
+langchain==0.3.27
+langchain-chroma==0.2.5
+langchain-huggingface==0.1.2
+langchain-openai==0.3.29
 markdown-it-py==4.2.0
 MarkupSafe==3.0.3
 mdurl==0.1.2
