@@ -18,6 +18,7 @@ from eval.run_eval import (
 )
 from rag.chains import get_retriever
 from rag.generation_chain import generate_answer
+from rag.retriever import CVE_ID_RE, retrieve as stage_a_retrieve
 
 
 EVAL_SET_PATH = "eval/eval_set.json"
@@ -47,10 +48,15 @@ def _coerce_chunk(item: Any) -> dict[str, Any]:
     }
 
 
-def _load_retrieved_chunks(question: str) -> list[dict[str, Any]]:
+def _load_retrieved_chunks(question: str) -> tuple[str, list[dict[str, Any]]]:
+    match = CVE_ID_RE.search(question)
+    if match:
+        documents = stage_a_retrieve(question)
+        return ("rag.retriever.retrieve (exact-ID bypass)", [_coerce_chunk(document) for document in documents])
+
     retriever = get_retriever()
     documents = retriever.invoke(question)
-    return [_coerce_chunk(document) for document in documents]
+    return ("rag.chains.get_retriever().invoke (semantic LangChain)", [_coerce_chunk(document) for document in documents])
 
 
 def _save_results(results: list[dict[str, Any]], total_entries: int, filepath: str | None = None) -> str:
@@ -81,7 +87,8 @@ def _run_single_eval(entry: dict[str, Any]) -> dict[str, Any]:
     expected_cve_ids = entry.get("expected_cve_ids", [])
     expected_facts = entry.get("expected_facts", {})
 
-    retrieved_chunks = _load_retrieved_chunks(question)
+    retrieval_path, retrieved_chunks = _load_retrieved_chunks(question)
+    print(f"  Retrieval path: {retrieval_path} -> {len(retrieved_chunks)} chunks")
 
     result = None
     for attempt in range(MAX_RETRIES):
@@ -114,6 +121,8 @@ def _run_single_eval(entry: dict[str, Any]) -> dict[str, Any]:
         "expected_cve_ids": expected_cve_ids,
         "cited_cve_ids": cited_cve_ids,
         "answer": answer,
+        "retrieval_path": retrieval_path,
+        "retrieved_chunk_count": len(retrieved_chunks),
         "metrics": {
             "retrieved_correct_cve": retrieved_correct_cve,
             "factual_accuracy": factual_accuracy,
@@ -150,6 +159,9 @@ def _print_results_table(results: list[dict[str, Any]]) -> None:
             f"factual_accuracy={fact_acc_str} | "
             f"citation_correct={cit_corr} | "
             f"trap_handled={trap_hand}"
+        )
+        print(
+            f"  Retrieval: {result['retrieval_path']} -> {result['retrieved_chunk_count']} chunks"
         )
 
         if (

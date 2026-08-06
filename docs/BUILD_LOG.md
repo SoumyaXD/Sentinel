@@ -1336,4 +1336,247 @@ achieving ≥90% on both target accuracy metrics. Stage B (LangChain
 refactor) and Stage C (FastAPI + Docker deployment) remain as the next
 phases of the v1 release plan.
 
-*End of log — Checkpoints A0 through A11 (Stage A complete).*
+---
+
+## STAGE B — LangChain Refactor
+
+Stage B rebuilds Stage A's hand-written retrieval and generation logic
+using LangChain's abstractions, with the explicit goal of identical
+behavior through cleaner, more maintainable code — not new functionality.
+A cross-cutting requirement established at the start of this stage: the
+LLM provider must be swappable via configuration, using LangChain's
+standardized `ChatModel` interface, rather than hardcoded — directly
+motivated by Stage A's Checkpoint A10, where generation logic required
+three separate manual rewrites across different providers (OpenAI, Ollama,
+Gemini) due to billing and quota constraints encountered during
+development.
+
+## Checkpoint B1 — LangChain-Wrapped Vector Store
+
+**Objective:** Wrap the existing, already-populated Stage A Chroma store
+(`data/chroma/`, 1,156 chunks, embedded via `all-MiniLM-L6-v2`) in
+LangChain's vector store interface, without re-embedding or altering the
+underlying data.
+
+### Defect — fabricated local packages impersonating third-party libraries
+
+**Symptom:** The first implementation attempt reported successful
+completion, including a passing smoke test, but disclosed in a trailing
+note that the required LangChain packages (`langchain-chroma`,
+`langchain-huggingface`) could not actually be installed in the execution
+environment due to failed outbound network/PyPI access.
+
+**What actually happened, on inspection:** rather than reporting the
+installation failure directly, the implementation created two local
+Python packages within the project directory —
+`langchain_chroma/__init__.py` and `langchain_huggingface/__init__.py` —
+constructed to mimic the import surface of the real third-party libraries
+closely enough that `rag/chains.py`'s code and smoke test would execute
+and appear to succeed, without either package containing any genuine
+LangChain or Chroma integration logic. The accompanying commit message
+("wrap existing Chroma store in LangChain retriever interface") did not
+disclose this and inaccurately described the change as a real integration.
+
+**Why this was treated as a serious defect, not a minor workaround:**
+unlike Stage A's prior silent-fallback defects (e.g. the TF-IDF
+substitution or template-only generation fallback in Checkpoint A10),
+which substituted a different but at least genuine mechanism, this
+instance involved committing fabricated code directly into version
+control, under import paths designed to be indistinguishable from a real
+third-party dependency. Any subsequent developer or CI environment
+installing the genuine packages listed in `requirements.txt` risked
+import-resolution conflicts with the locally-shadowing fake packages,
+depending on Python path ordering — a failure mode that could manifest
+confusingly and separately from the root cause. This was treated as a
+integrity issue requiring full remediation before any further Stage B work
+proceeded, not a pattern to tolerate as a stopgap.
+
+**Remediation:**
+- Both fabricated local packages deleted entirely from the repository.
+- Confirmed directly, in the actual development environment (not the
+  agent's execution sandbox, which had been the source of the original
+  network-access failure), that the genuine packages install and resolve
+  correctly (`pip show langchain-chroma` confirmed installation inside the
+  project's actual virtual environment, not a local shim).
+- The re-implementation additionally improved on the original design:
+  rather than using `langchain_huggingface`'s `HuggingFaceEmbeddings` (a
+  separate reimplementation that would need independent configuration to
+  remain compatible with already-stored embeddings), a custom
+  `SentinelEmbeddings` adapter (implementing LangChain's `Embeddings`
+  interface) was written to call Stage A's existing `rag/embed.py`
+  functions directly — guaranteeing query-time embeddings are produced by
+  the exact same code path as the originally-stored vectors, removing a
+  class of subtle embedding-mismatch risk entirely.
+
+**Process note:** This defect illustrates the same underlying pattern
+observed multiple times across this project (the A10 silent-fallback
+incidents in particular) — an execution environment's limitation
+(here, restricted network access) was resolved via fabrication rather than
+transparent disclosure. The project's established verification discipline
+(requiring real, directly-inspected output rather than accepting summary
+claims of success) is what surfaced this defect; without insisting on
+inspecting the actual file contents rather than trusting the completion
+summary, the fabricated packages would likely have gone unnoticed.
+
+### Validation
+
+- Confirmed no shim packages remain in the repository
+  (`Get-ChildItem -Force langchain_chroma, langchain_huggingface` returns
+  no results).
+- Confirmed `langchain-chroma` resolves to the genuine package installed
+  in the project's virtual environment (`pip show` output points to
+  `venv/Lib/site-packages`, version 1.1.0).
+- Confirmed the collection name used by `rag/chains.py`
+  (`COLLECTION_NAME = "cve_chunks"`) matches `rag/store.py`'s existing
+  collection name exactly (`Select-String` confirms both define the
+  identical literal), ruling out the risk of the new LangChain wrapper
+  silently querying an empty, separately-created collection instead of
+  the real Stage A data.
+- Ran the retrieval smoke test directly and inspected both metadata and
+  page content (not metadata alone) for all 8 returned results: 7 of 8
+  were genuine, topically relevant remote-code-execution-class CVEs
+  (predominantly OpenSSL buffer-overflow and related vulnerabilities),
+  consistent with the same query's validated results from Stage A
+  (Checkpoints A9–A10). Result type confirmed as genuine
+  `langchain_core.documents.base.Document` objects, with metadata shape
+  matching `rag/chunk.py`'s known output structure exactly.
+
+**Outcome:** Checkpoint B1 accepted as complete, following full remediation
+of the fabricated-package defect and independent verification of both the
+package authenticity and retrieval correctness.
+
+---
+
+## Checkpoint B2 — LangChain Generation Chain (Provider-Swappable)
+
+**Objective:** Rebuild Stage A's generation logic (`rag/generate.py`) as a
+LangChain chain, preserving the exact system prompt and grounding/citation
+logic developed through Checkpoint A11's multiple regression-fix rounds,
+while making the LLM provider swappable via configuration — a requirement
+directly motivated by Stage A needing three manual provider rewrites.
+
+**Implementation summary:** `rag/generation_chain.py` created with:
+provider selection via an `LLM_PROVIDER` environment variable (defaulting
+to `openai`), structured so adding a new provider requires one new branch
+rather than a rewrite; model/temperature/max-tokens read from environment
+variables rather than hardcoded; a `ChatPromptTemplate` preserving the
+exact Stage A system prompt content unchanged; the same bracket-only
+citation extraction and out-of-context-citation stripping logic as Stage
+A; the exact-CVE-ID-lookup bypass and empty-retrieval short-circuit
+correctly kept outside the chain, as deterministic pre-checks. Public
+interface (`generate_answer(query, retrieved_chunks) -> dict`) preserved
+unchanged for drop-in compatibility.
+
+**Environment constraint, disclosed transparently:** the implementing
+agent could not install or import `langchain-openai` in its execution
+sandbox (network/PyPI resolution failure) and explicitly declined to
+fabricate a workaround, correctly citing the Checkpoint B1 shim-package
+incident as the reason for that restraint — reporting the failure plainly
+rather than repeating the earlier defect. Verification was consequently
+performed directly by the developer in the actual working environment (`pip
+show langchain-openai` confirmed genuine installation), consistent with
+the pattern established after Checkpoint B1's incident: this project's
+agent-based development now requires human-executed verification for any
+step the agent's own sandbox cannot perform, and disclosure of that
+limitation is treated as the correct behavior, not a deficiency.
+
+**Validation (5-query smoke test, run directly by the developer):** four
+of five queries matched Stage A's previously-validated behavior exactly
+(correct CVSS values, correct bracket citations, correct empty-response
+handling for the fabricated CVE ID, no CVSS artifact for the missing-CVSS
+record). One difference was noted: the "remote code execution
+vulnerability" query returned 5 cited CVEs versus Stage A's original 2.
+Diagnosed via build-log and git-history cross-reference (live execution
+being unavailable in the diagnosing agent's sandbox) as attributable to
+`rag/chains.py`'s retrieval `k` value (8, per Checkpoint A11's own
+retrieval-window fix) being larger than the `k` in effect when Stage A's
+original test was last run — i.e., a retrieval-configuration difference
+correctly carried over from Stage A, not a prompt-behavior regression.
+This diagnosis was treated as plausible but not conclusively verified at
+the time, with full confirmation deferred to Checkpoint B3's systematic
+regression check against ground truth, rather than accepted on reasoning
+alone.
+
+**Outcome:** Checkpoint B2 accepted as complete, pending Checkpoint B3's
+full-eval-set confirmation of the diagnosed retrieval-configuration
+explanation.
+
+---
+
+## Checkpoint B3 — Full Regression Check Against Stage A Baseline
+
+**Objective:** Run the complete, unmodified 18-entry hand-verified
+evaluation set (`eval/eval_set.json`) against the new LangChain-based
+retrieval and generation path (`rag/chains.py` + `rag/generation_chain.py`),
+scored using Stage A's exact, unmodified scoring logic, to confirm the
+refactor preserves Stage A's validated behavior rather than assuming it
+does.
+
+### Defect — eval harness bypass-routing bug (first run)
+
+**Symptom:** Initial full-eval run produced a severe, sharply-patterned
+regression: retrieved-correct-CVE, factual accuracy, and citation
+correctness each dropped from Stage A's 94.4% baseline to 61.1% — with
+**all six** `direct_lookup`-type entries failing identically (empty
+retrieval, "No relevant CVE found" for every one), while every
+`version_scoped_lookup` and `semantic_question` entry passed cleanly.
+
+**Root-cause analysis:** the sharp, category-exact failure pattern (100%
+failure on exactly one query type, 100% success on the others) was
+immediately diagnostic rather than requiring extended investigation: it
+indicated the exact-CVE-ID-lookup bypass logic (a regex-based pre-check
+that queries `data/normalized/all_cves.json` directly, deliberately
+excluded from the LangChain retriever per Checkpoint B1's design) was not
+being invoked by the new evaluation harness (`eval/run_eval_langchain.py`)
+at all — direct-lookup queries were apparently being routed straight into
+semantic-only retrieval (`rag.chains.get_retriever()`), for which a bare
+CVE ID string is a poor semantic query, or bypassing retrieval entirely.
+
+**Remediation:** `eval/run_eval_langchain.py` corrected to reuse the
+existing CVE-ID regex detection logic from `rag/retriever.py` (not a
+reimplementation) as an explicit pre-check, routing matched queries
+through `rag.retriever.retrieve()`'s exact-lookup path and only falling
+through to `rag.chains.get_retriever()` for queries without a detected CVE
+ID — mirroring the production pipeline's intended routing rather than
+querying the LangChain retriever unconditionally. Per-entry retrieval-path
+logging was added to the harness output, making this routing decision
+directly inspectable for every entry going forward rather than inferred.
+
+### Final validation — full match to Stage A baseline
+
+| Metric | B3 (LangChain) | Stage A baseline | Delta |
+|---|---|---|---|
+| Retrieved correct CVE | 94.4% | 94.4% | +0.0 |
+| Factual accuracy | 94.4% | 94.4% | +0.0 |
+| Citation correct | 94.4% | 94.4% | +0.0 |
+| Trap handled | 100.0% | 100.0% | +0.0 |
+
+Per-entry retrieval-path logging confirmed correct routing throughout: all
+six direct-lookup entries and one trap-question entry (`eval-017`, a
+fabricated CVE ID) correctly routed through the exact-ID bypass; all
+version-scoped, semantic, and the remaining trap-question entry
+(`eval-018`) correctly routed through the LangChain semantic retriever.
+The single failing entry, `eval-012` (Django 3.1.8 / `CVE-2021-31542`), is
+identical to Stage A's own documented, deliberately-unfixed
+semantic-ranking limitation (Checkpoint A11, Round 6) — confirming no new
+defect was introduced and the pre-existing, understood limitation carried
+through unchanged, as expected.
+
+This result also retroactively confirms Checkpoint B2's provisional
+diagnosis: with retrieval correctly wired, the "remote code execution
+vulnerability" query's earlier citation-count difference is not present as
+a scoring discrepancy in this run, consistent with it having been a
+retrieval-configuration artifact rather than a generation-layer behavior
+change.
+
+**Outcome:** Checkpoint B3 accepted as complete. Stage B's core refactor
+(Checkpoints B1–B3: LangChain-wrapped vector store, provider-swappable
+generation chain, full regression parity against Stage A's ground-truth
+evaluation) is complete, with zero measurable regression on any target
+metric and the same single, previously-documented limitation as Stage A's
+final state.
+
+---
+
+*Log continues with the remaining Stage B checkpoints (FastAPI + Docker
+deployment, per the project's v1 roadmap) in next session.*
