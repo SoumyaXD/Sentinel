@@ -11,6 +11,11 @@ from pathlib import Path
 from statistics import fmean
 from typing import Any, TypeVar
 
+try:
+    from instructor.v2.core.errors import IncompleteOutputException
+except ImportError:  # pragma: no cover - instructor version dependent
+    IncompleteOutputException = None
+
 from eval.run_eval import _load_eval_set
 from rag.chains import get_retriever
 from rag.generation_chain import generate_answer
@@ -175,6 +180,7 @@ def _build_ragas_metrics() -> tuple[Any, Any]:
     client_kwargs: dict[str, Any] = {
         "timeout": float(os.getenv("RAGAS_OPENAI_TIMEOUT", "60")),
         "max_retries": int(os.getenv("RAGAS_OPENAI_MAX_RETRIES", "5")),
+        "max_completion_tokens": int(os.getenv("RAGAS_OPENAI_MAX_TOKENS", "2048")),
     }
     base_url = os.getenv("RAGAS_OPENAI_BASE_URL", os.getenv("OPENAI_BASE_URL", "")).strip()
     if base_url:
@@ -267,6 +273,11 @@ async def _call_metric_with_retry(
                 )
                 await asyncio.sleep(wait_time)
             else:
+                # If it's an IncompleteOutputException, log it and return None
+                # so the caller can handle it gracefully without crashing the entire run
+                if IncompleteOutputException is not None and isinstance(exc, IncompleteOutputException):
+                    print(f"  {label} failed after {MAX_RETRIES} attempts: {type(exc).__name__} - {exc}")
+                    return None
                 raise
 
     raise RuntimeError(f"{label} failed unexpectedly") from last_error
@@ -336,12 +347,31 @@ async def _evaluate_entry(
                 "response": answer,
             },
         )
-        ragas_result = {
-            "status": "scored",
-            "reason": None,
-            "faithfulness": _score_value(faithfulness_result),
-            "answer_relevancy": _score_value(answer_relevancy_result),
-        }
+
+        # Handle judge failures gracefully
+        if faithfulness_result is None or answer_relevancy_result is None:
+            failed_metrics = []
+            if faithfulness_result is None:
+                failed_metrics.append("Faithfulness")
+            if answer_relevancy_result is None:
+                failed_metrics.append("AnswerRelevancy")
+            reason = (
+                f"RAGAS judge call failed for {', '.join(failed_metrics)} after {MAX_RETRIES} retries. "
+                "This entry could not be scored due to a judge error (e.g., token limit exceeded)."
+            )
+            ragas_result = {
+                "status": "judge_error",
+                "reason": reason,
+                "faithfulness": _score_value(faithfulness_result) if faithfulness_result is not None else None,
+                "answer_relevancy": _score_value(answer_relevancy_result) if answer_relevancy_result is not None else None,
+            }
+        else:
+            ragas_result = {
+                "status": "scored",
+                "reason": None,
+                "faithfulness": _score_value(faithfulness_result),
+                "answer_relevancy": _score_value(answer_relevancy_result),
+            }
 
     return {
         "id": entry["id"],
@@ -384,9 +414,10 @@ def _summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
     scored_results = [result for result in results if result["ragas"]["status"] == "scored"]
     excluded_results = [result for result in results if result["ragas"]["status"] == "excluded"]
     excluded_refusal_results = [result for result in results if result["ragas"]["status"] == "excluded_refusal"]
+    judge_error_results = [result for result in results if result["ragas"]["status"] == "judge_error"]
 
-    faithfulness_scores = [result["ragas"]["faithfulness"] for result in scored_results]
-    answer_relevancy_scores = [result["ragas"]["answer_relevancy"] for result in scored_results]
+    faithfulness_scores = [result["ragas"]["faithfulness"] for result in scored_results if result["ragas"]["faithfulness"] is not None]
+    answer_relevancy_scores = [result["ragas"]["answer_relevancy"] for result in scored_results if result["ragas"]["answer_relevancy"] is not None]
 
     faithfulness_mean = fmean(faithfulness_scores) if faithfulness_scores else 0.0
     answer_relevancy_mean = fmean(answer_relevancy_scores) if answer_relevancy_scores else 0.0
@@ -398,6 +429,7 @@ def _summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
     print(f"RAGAS-scored entries: {len(scored_results)}")
     print(f"RAGAS-excluded entries (trap questions): {len(excluded_results)}")
     print(f"RAGAS-excluded entries (genuine refusals): {len(excluded_refusal_results)}")
+    print(f"RAGAS-judge-error entries: {len(judge_error_results)}")
     print(f"Mean faithfulness: {faithfulness_mean:.3f}")
     print(f"Mean answer relevancy: {answer_relevancy_mean:.3f}")
     if excluded_results:
@@ -408,12 +440,17 @@ def _summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
         print("Excluded genuine refusals:")
         for result in excluded_refusal_results:
             print(f"  - {result['id']}: {result['ragas']['reason']}")
+    if judge_error_results:
+        print("Judge error entries:")
+        for result in judge_error_results:
+            print(f"  - {result['id']}: {result['ragas']['reason']}")
     print()
 
     return {
         "scored_entries": len(scored_results),
         "excluded_trap_entries": len(excluded_results),
         "excluded_refusal_entries": len(excluded_refusal_results),
+        "judge_error_entries": len(judge_error_results),
         "mean_faithfulness": faithfulness_mean,
         "mean_answer_relevancy": answer_relevancy_mean,
     }
