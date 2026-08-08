@@ -1578,5 +1578,238 @@ final state.
 
 ---
 
-*Log continues with the remaining Stage B checkpoints (FastAPI + Docker
-deployment, per the project's v1 roadmap) in next session.*
+## Checkpoint C1 — RAGAS Evaluation Harness
+
+**Objective:** Add an automated, LLM-as-judge evaluation layer
+(`eval/run_ragas.py`) as a complement to — not a replacement for — the
+existing deterministic evaluation harness (`eval/run_eval.py`,
+`eval/run_eval_langchain.py`). The deterministic harness verifies exact,
+independently-verified facts (CVSS scores, citation IDs) against
+hand-curated ground truth. RAGAS measures different, complementary
+properties: **faithfulness** (are the answer's individual claims actually
+supported by retrieved context, independent of whether the cited CVE ID is
+correct) and **answer relevancy** (does the answer address the question
+asked). These catch a failure class the deterministic harness cannot: a
+system can cite the exactly correct CVE ID while still asserting claims in
+its prose that the retrieved context does not actually support.
+
+**Version-drift precaution:** RAGAS's public API changed substantially in
+version 0.4.x, moving from a batch `evaluate()` call over a HuggingFace
+`Dataset` to an async, class-based `ragas.metrics.collections` pattern
+(`Faithfulness(...).ascore(...)`, etc.). Since this class of drift had
+already caused confusion earlier in this project's model-selection history
+(Checkpoint A10's Gemini model-name deprecation), the dependency was
+explicitly pinned (`ragas>=0.4,<0.5`) and implemented against the current
+documented pattern rather than older tutorial-style code, which commonly
+still shows the deprecated `evaluate()`-based API.
+
+### Implementation summary
+
+- Reused the existing 18-entry `eval/eval_set.json` as the question
+  source — no separate RAGAS-specific dataset was created.
+- Evaluates the Stage B (LangChain) pipeline output: for each entry, the
+  generated answer and retrieved context text are captured and scored via
+  RAGAS's `Faithfulness` and `AnswerRelevancy` metrics.
+- `ContextPrecision` and `ContextRecall` were deliberately deferred, since
+  both require a labeled reference answer per entry, which
+  `eval_set.json`'s `expected_facts` structure was not built to provide —
+  noted as a candidate future enhancement rather than retrofitted under
+  time pressure.
+- **Cost-safety measures added deliberately**, given each RAGAS metric
+  call is an independent LLM judge call (faithfulness and relevancy
+  scoring each cost roughly one additional API call per entry, on top of
+  the generation call itself): a pre-run cost estimate is printed, and an
+  explicit interactive confirmation is required before a full batch run
+  executes, preventing accidental spend.
+- Trap-question entries (`eval-017`, `eval-018`) are excluded from RAGAS
+  scoring with an explicit `status: "excluded"` and reason, on the basis
+  that a deterministic no-match response has no meaningful claims for a
+  faithfulness/relevancy judge to evaluate.
+
+### Dependency installation difficulties
+
+Initial setup required substantially more effort than a typical dependency
+addition:
+- Transient package-resolution/network failures during RAGAS installation.
+- Version incompatibilities between RAGAS and the project's existing
+  LangChain dependency versions.
+- A missing `vertexai` integration inside `langchain-community`, which
+  prevented RAGAS from importing successfully in the working environment.
+
+**Remediation, as reported:** an isolated virtual environment was created
+specifically for RAGAS work; the missing VertexAI import was patched
+directly inside that temporary environment to allow testing to proceed;
+missing runtime dependencies (e.g. `transformers`) were installed.
+
+**Note on the VertexAI import patch — flagged for scrutiny, consistent
+with this project's established verification discipline:** directly
+patching a third-party library's internals to force a successful import
+is the same general category of workaround that produced the fabricated-
+shim-package defect in Checkpoint B1, and should not be treated as routine
+without closer inspection. Unlike the B1 incident, this patch was applied
+transparently and disclosed, and was reported as confined to an isolated,
+temporary environment rather than committed into the project's actual
+dependency chain — a meaningfully different and more defensible situation.
+However, the exact nature of the patch (what was changed, and whether it
+affects the correctness of any RAGAS scoring logic that depends on
+`langchain-community`'s import surface) has not yet been independently
+verified in the way this project's other environment-related defects have
+been. This is noted as an open item warranting the same direct
+verification standard applied elsewhere in this log, rather than accepted
+as resolved on the basis of the summary description alone.
+
+### Defect — evaluation harness retrieval-path mismatch (first run)
+
+**Symptom:** initial RAGAS scores differed substantially from expected
+behavior in a pattern that warranted investigation before trusting the
+results.
+
+**Root-cause analysis:** `eval/run_ragas.py` was initially routing every
+query — including direct CVE-ID lookups — through semantic retrieval only
+(`rag.chains.get_retriever()`), rather than mirroring the production
+pipeline's actual routing logic, which detects an explicit CVE ID via
+regex and bypasses semantic search entirely for such queries (established
+in Checkpoint A9, carried into Stage B in Checkpoint B1). This is the same
+category of defect independently found and fixed in Checkpoint B3's eval
+harness (`eval/run_eval_langchain.py`) — a case of a *second*, separately-
+written evaluation script reintroducing the same routing omission, rather
+than reusing the already-corrected logic.
+
+**Remediation:** `eval/run_ragas.py` updated to detect CVE IDs via the
+existing `CVE_ID_RE` pattern (reused, not reimplemented) and route
+direct-lookup queries through `rag.retriever.retrieve()`, with only
+non-ID queries falling through to the LangChain semantic retriever —
+matching the exact routing behavior already validated in Checkpoint B3.
+
+**Process observation:** this recurrence suggests the exact-ID-routing
+requirement, while correctly documented in this project's architecture,
+is easy to omit when a new evaluation script is written independently
+rather than built on top of a shared retrieval-dispatch helper. A
+worthwhile future refactor (not undertaken in this checkpoint) would be
+extracting the routing decision (exact-ID vs. semantic) into a single
+shared function that all evaluation harnesses and the production pipeline
+call, rather than each script re-implementing the same dispatch logic.
+
+### Results (full 18-entry run, post-fix)
+
+| Metric | Score |
+|---|---|
+| Mean faithfulness (16 scored entries) | 89.8% |
+| Mean answer relevancy (16 scored entries) | 83.2% |
+| Trap questions excluded from scoring | 2 (as designed) |
+
+**Notable findings requiring follow-up, not treated as immediately
+resolved:**
+
+- **`eval-012`** (the known, previously-documented Django 3.1.8 /
+  `CVE-2021-31542` retrieval-ranking limitation from Checkpoint A11 Round
+  6) scored `faithfulness: 0.0`. Flagged as likely a scoring-edge-case
+  artifact rather than a genuine "0% faithful" signal: the answer is a
+  correct refusal ("No relevant CVE found") for a real, answerable
+  question — a different situation from the trap questions' *no correct
+  answer exists* case, but one RAGAS's faithfulness metric may not
+  meaningfully score either way, since a refusal contains no claims to
+  check for support. Follow-up planned: distinguish genuine-refusal
+  answers to real questions from both "scored" and "trap-excluded"
+  categories, so this known limitation is tracked accurately rather than
+  recorded as a spurious zero.
+- **Version-scoped lookup entries** (`eval-007`: 0.889, `eval-008`: 0.75,
+  `eval-009`: 0.857) showed meaningfully lower faithfulness than
+  direct-lookup entries (consistently 1.0), despite all three passing the
+  deterministic harness's citation-correctness check. This is precisely
+  the failure class RAGAS was added to catch: correct citation with
+  possibly-unsupported prose claims. Follow-up planned: manually inspect
+  each entry's specific unsupported claims against retrieved context to
+  determine whether this warrants a system-prompt adjustment or represents
+  an acceptable synthesis tradeoff.
+
+**Outcome:** Checkpoint C1 accepted as functionally complete — RAGAS
+evaluation is integrated, cost-safe, and produces real, inspectable
+results distinguishing genuine quality signals from known limitations.
+Two follow-up investigations (the `eval-012` refusal-scoring edge case,
+and the version-scoped faithfulness gap) are carried forward as open items
+rather than treated as resolved, consistent with this project's practice
+of not closing a checkpoint on the basis of a passing run alone when a
+result pattern warrants further inspection.
+
+---
+
+## Checkpoint C1 — Follow-Up Investigations, Resolved
+
+Two open items from Checkpoint C1's initial run were investigated to
+completion.
+
+### Follow-up 1 — `eval-012` refusal-scoring edge case
+
+**Resolution:** `eval/run_ragas.py` updated with an explicit
+`_is_genuine_refusal()` check, matching against the deterministic refusal
+phrases already used elsewhere in the pipeline (`rag/generate.py`,
+`rag/generation_chain.py`). Entries matching this check are now assigned a
+distinct `status: "excluded_refusal"`, separate from both `"scored"`
+results and the trap-question `"excluded"` status, with the summary
+function (`_summarize()`) reporting all three categories independently.
+This ensures `eval-012` (the known, previously-documented Django 3.1.8 /
+`CVE-2021-31542` retrieval limitation from Checkpoint A11 Round 6) is
+recorded as "the pipeline correctly declined to answer a real question it
+could not retrieve evidence for" rather than as a spurious 0.0 faithfulness
+score, which had no meaningful interpretation for a response containing no
+claims to evaluate. Code reviewed directly and confirmed correctly
+implemented; full live re-verification (confirming the new status appears
+in an actual run) remains to be executed by the developer as a final
+confirmation step, consistent with this project's standing practice of
+verifying agent-reported code changes against real execution output.
+
+### Follow-up 2 — version-scoped lookup faithfulness gap (`eval-007`, `eval-008`, `eval-009`)
+
+**Investigation method:** rather than re-running the pipeline, the
+existing saved results
+(`eval/results/run_ragas_20260808_013548.json`) were used directly — the
+answer text and full retrieved-context text for all three flagged entries
+were extracted and manually compared, claim by claim.
+
+**Finding — a single, consistent, benign root cause identified across all
+three entries:** each answer states that a CVE affects a *specific*
+version (e.g. "affects lodash version 4.17.20", "affects Express 4.19.0")
+by correctly inferring this from a retrieved *range* statement (e.g.
+"affects versions before 4.17.21"). This is valid, intended synthesis
+behavior — direct implementation of the version-matching instruction added
+to the system prompt during Checkpoint A11 ("only cite CVEs that actually
+apply to the exact version asked about"). RAGAS's `Faithfulness` metric,
+however, evaluates whether each claim is near-literally supported by the
+retrieved text, and does not credit valid logical inference from a stated
+range to a specific value within that range as "supported" in the same way
+literal restatement would be. The lower faithfulness scores on these three
+entries are therefore attributable to a mismatch between RAGAS's
+literal-entailment definition of faithfulness and the pipeline's correct,
+deliberately-designed inferential behavior — not a hallucination or
+grounding defect in generation.
+
+**A specific, more serious-looking concern was raised and directly
+resolved during this investigation:** `eval-009`'s answer states that
+`CVE-2024-29041` affects Express version 4.19.0, while one retrieved
+context noted "an initial fix went out with `express@4.19.0`" — raising
+the question of whether the model had the fix/vulnerable relationship
+backwards. Direct inspection of the full, untruncated retrieved context
+resolved this: the same source explains the fix shipped in 4.19.0 was
+followed by "a feature regression" patched in 4.19.1, with "improved
+handling for the bypass" not added until 4.19.2 — and the record's
+structured, normalized affected-version field (built by
+`ingest/normalize.py`'s version-range parsing, Checkpoint A5) explicitly
+states the vulnerability affects "versions before 4.19.2." The model's
+claim is therefore correct and consistent with both the structured data
+and the nuanced multi-stage-patch prose, not backwards — a genuine
+multi-stage remediation history (partial fix, regression, full fix)
+rather than a simple binary vulnerable/patched split. This was verified
+directly against the retrieved source text before being accepted, rather
+than assumed correct or incorrect from the summary alone.
+
+**Outcome:** no generation-layer or prompt change is warranted for this
+finding. It is documented as a known, understood characteristic of
+evaluating a version-inference-capable pipeline against a literal-
+entailment faithfulness metric, rather than a quality gap requiring
+remediation. Both Checkpoint C1 follow-up items are now resolved.
+
+---
+
+*Log continues with the remaining Stage C checkpoints (FastAPI service,
+rate limiting, Docker, deployment) in next session.*
