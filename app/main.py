@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import os
-import sys
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
@@ -44,7 +43,7 @@ async def lifespan(app: FastAPI):
     """Startup validation: ensure OPENAI_API_KEY is present."""
     if not os.getenv("OPENAI_API_KEY", "").strip():
         logger.error("OPENAI_API_KEY is not set. Refusing to start.")
-        sys.exit(1)
+        raise RuntimeError("OPENAI_API_KEY is not set. Refusing to start.")
     yield
 
 
@@ -80,7 +79,11 @@ def health() -> JSONResponse | dict[str, str]:
             status_code=503,
             content={"status": "degraded", "reason": "OPENAI_API_KEY is not set"},
         )
-    if not (CHROMA_DIR.exists() and any(CHROMA_DIR.iterdir())):
+    try:
+        chroma_ok = CHROMA_DIR.exists() and any(CHROMA_DIR.iterdir())
+    except OSError:
+        chroma_ok = False
+    if not chroma_ok:
         return JSONResponse(
             status_code=503,
             content={"status": "degraded", "reason": "Chroma store is missing or empty"},
