@@ -10,7 +10,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
-from slowapi.middleware import _SlowAPIMiddleware
+from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
 
 from app.schemas import AskRequest, AskResponse
@@ -61,7 +61,7 @@ app.add_exception_handler(
         content={"detail": "Rate limit exceeded. Try again in a minute."},
     ),
 )
-app.add_middleware(_SlowAPIMiddleware)
+app.add_middleware(SlowAPIMiddleware)
 
 
 def _retrieve(question: str) -> list[dict]:
