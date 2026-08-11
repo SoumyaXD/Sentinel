@@ -3,17 +3,66 @@
 from __future__ import annotations
 
 import logging
+import os
+import sys
+from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import _SlowAPIMiddleware
+from slowapi.util import get_remote_address
 
 from app.schemas import AskRequest, AskResponse
-from rag.chains import get_retriever
+from rag.chains import CHROMA_DIR, get_retriever
 from rag.generation_chain import generate_answer
 from rag.retriever import CVE_ID_RE, retrieve
 
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Sentinel", description="CVE research and patch-prioritization RAG API.")
+
+def _rate_limit_string() -> str:
+    """Return the rate-limit string from env, defaulting to '10/minute'."""
+    raw = os.getenv("RATE_LIMIT_PER_MINUTE", "")
+    try:
+        value = int(raw)
+        if value > 0:
+            return f"{value}/minute"
+    except (ValueError, TypeError):
+        pass
+    return "10/minute"
+
+
+RATE_LIMIT_STRING = _rate_limit_string()
+
+limiter = Limiter(key_func=get_remote_address)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Startup validation: ensure OPENAI_API_KEY is present."""
+    if not os.getenv("OPENAI_API_KEY", "").strip():
+        logger.error("OPENAI_API_KEY is not set. Refusing to start.")
+        sys.exit(1)
+    yield
+
+
+app = FastAPI(
+    title="Sentinel",
+    description="CVE research and patch-prioritization RAG API.",
+    lifespan=lifespan,
+)
+
+app.state.limiter = limiter
+app.add_exception_handler(
+    RateLimitExceeded,
+    lambda request, exc: JSONResponse(
+        status_code=429,
+        content={"detail": "Rate limit exceeded. Try again in a minute."},
+    ),
+)
+app.add_middleware(_SlowAPIMiddleware)
 
 
 def _retrieve(question: str) -> list[dict]:
@@ -25,13 +74,24 @@ def _retrieve(question: str) -> list[dict]:
 
 
 @app.get("/health")
-def health() -> dict[str, str]:
+def health() -> JSONResponse | dict[str, str]:
+    if not os.getenv("OPENAI_API_KEY", "").strip():
+        return JSONResponse(
+            status_code=503,
+            content={"status": "degraded", "reason": "OPENAI_API_KEY is not set"},
+        )
+    if not (CHROMA_DIR.exists() and any(CHROMA_DIR.iterdir())):
+        return JSONResponse(
+            status_code=503,
+            content={"status": "degraded", "reason": "Chroma store is missing or empty"},
+        )
     return {"status": "ok"}
 
 
 @app.post("/ask", response_model=AskResponse)
-def ask(request: AskRequest) -> AskResponse:
-    question = request.question.strip()
+@limiter.limit(RATE_LIMIT_STRING)
+def ask(request: Request, body: AskRequest) -> AskResponse:
+    question = body.question.strip()
     if not question:
         raise HTTPException(status_code=422, detail="question must not be empty.")
 

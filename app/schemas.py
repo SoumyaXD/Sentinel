@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 
 class AskRequest(BaseModel):
-    question: str = Field(..., min_length=1, description="Natural-language CVE question or exact CVE ID.")
+    question: str = Field(..., min_length=1, max_length=500, description="Natural-language CVE question or exact CVE ID.")
 
 
 class AskResponse(BaseModel):
