@@ -152,6 +152,22 @@ def retrieve(query: str, k: int = 8) -> list[dict[str, Any]]:
     return _semantic_retrieve(query, k)
 
 
+def retrieve_for_ask(question: str) -> list[dict]:
+    """
+    Route through the exact-ID bypass, else the LangChain semantic retriever.
+    
+    This is the canonical routing helper used by both app/main.py and scripts.
+    Returns dicts in the format expected by generate_answer().
+    """
+    if CVE_ID_RE.search(question):
+        return retrieve(question)
+    
+    # Use LangChain retriever for semantic search
+    from rag.chains import get_retriever
+    docs = get_retriever().invoke(question)
+    return [{"text": d.page_content, "metadata": d.metadata} for d in docs]
+
+
 def _print_query(label: str, query: str, k: int = 8) -> None:
     print(f"Query: {label}")
     results = retrieve(query, k=k)

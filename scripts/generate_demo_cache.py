@@ -11,20 +11,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app.schemas import AskRequest
-from rag.chains import get_retriever
 from rag.generation_chain import generate_answer
-from rag.retriever import CVE_ID_RE, retrieve
+from rag.retriever import retrieve_for_ask
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-
-def _retrieve(question: str) -> list[dict]:
-    """Route through the exact-ID bypass, else the LangChain semantic retriever."""
-    if CVE_ID_RE.search(question):
-        return retrieve(question)
-    docs = get_retriever().invoke(question)
-    return [{"text": d.page_content, "metadata": d.metadata} for d in docs]
 
 
 def main() -> None:
@@ -46,7 +37,7 @@ def main() -> None:
         logger.info(f"[{idx}/18] Processing: {question}")
 
         try:
-            retrieved_chunks = _retrieve(question)
+            retrieved_chunks = retrieve_for_ask(question)
             result = generate_answer(question, retrieved_chunks)
 
             cache["entries"].append({

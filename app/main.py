@@ -16,9 +16,9 @@ from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
 
 from app.schemas import AskRequest, AskResponse
-from rag.chains import CHROMA_DIR, get_retriever
+from rag.chains import CHROMA_DIR
 from rag.generation_chain import generate_answer
-from rag.retriever import CVE_ID_RE, retrieve
+from rag.retriever import retrieve_for_ask
 
 logger = logging.getLogger(__name__)
 
@@ -48,8 +48,8 @@ if DEMO_CACHE_PATH.exists():
         cache_data = json.load(f)
         # Build a normalized-question-to-answer mapping
         for entry in cache_data.get("entries", []):
-            # Store by normalized question (lowercase, stripped)
-            normalized_q = entry["question"].lower().strip()
+            # Store by normalized question: lowercase, strip whitespace and trailing punctuation
+            normalized_q = entry["question"].lower().strip().rstrip("?.!")
             DEMO_CACHE[normalized_q] = {
                 "answer": entry["answer"],
                 "cited_cve_ids": entry["cited_cve_ids"],
@@ -84,14 +84,6 @@ app.add_exception_handler(
 app.add_middleware(SlowAPIMiddleware)
 
 
-def _retrieve(question: str) -> list[dict]:
-    """Route through the exact-ID bypass, else the LangChain semantic retriever."""
-    if CVE_ID_RE.search(question):
-        return retrieve(question)
-    docs = get_retriever().invoke(question)
-    return [{"text": d.page_content, "metadata": d.metadata} for d in docs]
-
-
 @app.get("/health", response_model=None, description="Health check endpoint verifying that OPENAI_API_KEY is set and the Chroma vector store is accessible.")
 def health() -> JSONResponse | dict[str, str]:
     if not os.getenv("OPENAI_API_KEY", "").strip():
@@ -114,7 +106,8 @@ def health() -> JSONResponse | dict[str, str]:
 @app.post("/ask/demo", response_model=AskResponse, description="Demo endpoint serving pre-cached answers for the 18 evaluation questions from eval/eval_set.json. Returns instantly with no API cost and no rate limit. If the question doesn't match a cached entry, returns 400 with guidance to use POST /ask instead.")
 def ask_demo(body: AskRequest) -> AskResponse:
     """Serve pre-cached demo answers for the 18 eval questions."""
-    normalized_q = body.question.lower().strip()
+    # Normalize: lowercase, strip whitespace and trailing punctuation
+    normalized_q = body.question.lower().strip().rstrip("?.!")
     
     if normalized_q in DEMO_CACHE:
         cached = DEMO_CACHE[normalized_q]
@@ -142,7 +135,7 @@ def ask(request: Request, body: AskRequest) -> AskResponse:
         raise HTTPException(status_code=422, detail="question must not be empty.")
 
     try:
-        retrieved_chunks = _retrieve(question)
+        retrieved_chunks = retrieve_for_ask(question)
     except Exception:
         logger.exception("Retrieval failed for question: %r", question)
         raise HTTPException(status_code=500, detail="Retrieval failed. Check server logs.") from None
