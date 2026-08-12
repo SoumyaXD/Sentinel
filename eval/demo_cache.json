@@ -1,0 +1,175 @@
+{
+  "generated_at": "2026-07-29",
+  "source": "eval\\eval_set.json",
+  "entries": [
+    {
+      "id": "eval-001",
+      "question": "What is CVE-2020-28500?",
+      "answer": "CVE-2020-28500 [CVE-2020-28500] is a Regular Expression Denial of Service (ReDoS) vulnerability affecting lodash (npm) versions before 4.17.21. It has a CVSS score of 5.3 and is classified as MEDIUM severity. The vulnerability can be exploited via the `toNumber`, `trim`, and `trimEnd` functions.",
+      "cited_cve_ids": [
+        "CVE-2020-28500"
+      ],
+      "retrieved_count": 3
+    },
+    {
+      "id": "eval-002",
+      "question": "What is CVE-2021-23337?",
+      "answer": "CVE-2021-23337 [CVE-2021-23337] is a HIGH-severity vulnerability in lodash (npm) with a CVSS score of 7.2. It allows for code injection via `_.template` imports key names, affecting versions before 4.17.21. The vulnerability arises when untrusted input is passed as key names in `options.imports`, which can lead to arbitrary code execution at template compilation time. Users are advised to upgrade to version 4.18.0 to mitigate this issue.",
+      "cited_cve_ids": [
+        "CVE-2021-23337"
+      ],
+      "retrieved_count": 4
+    },
+    {
+      "id": "eval-003",
+      "question": "What is CVE-2024-43796?",
+      "answer": "CVE-2024-43796 [CVE-2024-43796] is a vulnerability in express (npm) that allows for cross-site scripting (XSS) via the `response.redirect()` method. It affects versions of express before 4.20.0 and version 5.0.0, with a CVSS score of 5 and MEDIUM severity. Successful exploitation requires that the attacker controls the input to `response.redirect()`, and certain conditions regarding the timing of the redirection must be met. The issue is patched in express version 4.20.0.",
+      "cited_cve_ids": [
+        "CVE-2024-43796"
+      ],
+      "retrieved_count": 5
+    },
+    {
+      "id": "eval-004",
+      "question": "What is CVE-2019-10742?",
+      "answer": "CVE-2019-10742 [CVE-2019-10742] is a Denial of Service vulnerability in axios, affecting versions prior to 0.18.1. It has a CVSS score of 7.5 and is classified as HIGH severity. The vulnerability occurs when a request exceeds the `maxContentLength` property, leading to high CPU usage without stopping the request. Users are recommended to upgrade to version 0.18.1 or later to mitigate this issue.",
+      "cited_cve_ids": [
+        "CVE-2019-10742"
+      ],
+      "retrieved_count": 2
+    },
+    {
+      "id": "eval-005",
+      "question": "What is CVE-2018-1000656?",
+      "answer": "CVE-2018-1000656 [CVE-2018-1000656] is a HIGH-severity vulnerability in Flask, with a CVSS score of 7.5. It involves Denial of Service due to improper input validation related to incorrect encoding of JSON data. This vulnerability affects Flask (pypi) versions before 0.12.3 and can lead to a large amount of memory usage, potentially resulting in denial of service. It has been fixed in version 0.12.3.",
+      "cited_cve_ids": [
+        "CVE-2018-1000656"
+      ],
+      "retrieved_count": 2
+    },
+    {
+      "id": "eval-006",
+      "question": "What is CVE-2021-44228?",
+      "answer": "CVE-2021-44228 [CVE-2021-44228] is a critical remote code execution vulnerability in Log4j, specifically affecting the log4j-core package. It has a CVSS score of 10. The vulnerability allows remote code injection via the LDAP JNDI parser in versions prior to 2.16.0. Affected versions include log4j-core versions 2.0.1 through 2.3.1, 2.4.0 through 2.12.2, and 2.13.0 through 2.15.0.",
+      "cited_cve_ids": [
+        "CVE-2021-44228"
+      ],
+      "retrieved_count": 7
+    },
+    {
+      "id": "eval-007",
+      "question": "What CVEs affect lodash version 4.17.20 via template import handling?",
+      "answer": "Lodash version 4.17.20 is affected by the following CVEs via template import handling:\n\n1. CVE-2021-23337 [CVE-2021-23337] - This vulnerability has a CVSS score of 7.2 and is classified as HIGH severity. It affects lodash versions before 4.17.21.\n\n2. CVE-2026-4800 [CVE-2026-4800] - This vulnerability has a CVSS score of 8.1 and is classified as HIGH severity. It affects lodash versions 4.0.0 through 4.18.0.\n\n3. CVE-2025-13465 [CVE-2025-13465] - This vulnerability has a CVSS score of 5.3 and is classified as MEDIUM severity. It affects lodash versions 4.0.0 through 4.17.23.\n\n4. CVE-2026-2950 [CVE-2026-2950] - This vulnerability has a CVSS score of 6.5 and is classified as MEDIUM severity. It also affects lodash versions 4.0.0 through 4.17.23.",
+      "cited_cve_ids": [
+        "CVE-2021-23337",
+        "CVE-2026-4800",
+        "CVE-2025-13465",
+        "CVE-2026-2950"
+      ],
+      "retrieved_count": 8
+    },
+    {
+      "id": "eval-008",
+      "question": "What CVEs affect lodash version 4.17.20 via ReDoS in trim and toNumber?",
+      "answer": "The CVE that affects lodash version 4.17.20 via ReDoS in the `trim` and `toNumber` functions is CVE-2020-28500 [CVE-2020-28500]. It has a CVSS score of 5.3 and is classified as MEDIUM severity. This vulnerability affects all versions of lodash prior to 4.17.21.",
+      "cited_cve_ids": [
+        "CVE-2020-28500"
+      ],
+      "retrieved_count": 8
+    },
+    {
+      "id": "eval-009",
+      "question": "What CVE affects Express 4.19.0?",
+      "answer": "CVE-2024-43796 [CVE-2024-43796] affects Express versions before 4.20.0, including 4.19.0. It has a CVSS score of 5.0 and is classified as MEDIUM severity. This vulnerability involves passing untrusted user input to `response.redirect()`, which may execute untrusted code. Additionally, CVE-2024-29041 [CVE-2024-29041] also affects Express versions before 4.19.2, including 4.19.0, with a CVSS score of 6.1 and MEDIUM severity.",
+      "cited_cve_ids": [
+        "CVE-2024-43796",
+        "CVE-2024-29041"
+      ],
+      "retrieved_count": 8
+    },
+    {
+      "id": "eval-010",
+      "question": "What CVE affects Axios 0.18.0?",
+      "answer": "CVE-2019-10742 [CVE-2019-10742] affects Axios version 0.18.0, with a CVSS score of 7.5 and is classified as HIGH severity. It is recommended to upgrade to version 0.18.1 or later to mitigate this vulnerability.",
+      "cited_cve_ids": [
+        "CVE-2019-10742"
+      ],
+      "retrieved_count": 8
+    },
+    {
+      "id": "eval-011",
+      "question": "What CVE affects Flask 0.12.2?",
+      "answer": "CVE-2018-1000656 [CVE-2018-1000656] affects Flask versions before 0.12.3, including Flask 0.12.2. It is a HIGH-severity vulnerability with CVSS 7.5, related to improper input validation that can lead to denial of service via incorrect encoding of JSON data. Additionally, CVE-2019-1010083 [CVE-2019-1010083] also affects Flask versions before 1.0, including 0.12.2, and is a HIGH-severity denial of service vulnerability due to unexpected memory usage, with CVSS 7.5.",
+      "cited_cve_ids": [
+        "CVE-2018-1000656",
+        "CVE-2019-1010083"
+      ],
+      "retrieved_count": 8
+    },
+    {
+      "id": "eval-012",
+      "question": "What CVE affects Django 3.1.8?",
+      "answer": "No relevant CVE found.",
+      "cited_cve_ids": [],
+      "retrieved_count": 8
+    },
+    {
+      "id": "eval-013",
+      "question": "Are there any remote code execution vulnerabilities in Log4j?",
+      "answer": "Yes, there are several remote code execution vulnerabilities in Log4j:\n\n1. CVE-2021-44228 [CVE-2021-44228] is a critical vulnerability with a CVSS score of 10, allowing remote code injection in Log4j. It affects log4j-core versions 2.0.1 through 2.15.0.\n\n2. CVE-2019-17571 [CVE-2019-17571] is also a critical vulnerability with a CVSS score of 9.8, which allows remote code execution through a deserialization issue in Log4j 1.2, affecting versions up to 1.2.17.\n\n3. CVE-2021-4104 [CVE-2021-4104] has a CVSS score of 7.5 and allows remote code execution through deserialization in Log4j 1.2 when configured to use JMSAppender.\n\n4. CVE-2021-45046 [CVE-2021-45046] is another critical vulnerability with a CVSS score of 9, which allows remote code execution due to an incomplete fix for CVE-2021-44228 in certain configurations, affecting log4j-core versions 2.0.1 through 2.16.0.\n\n5. CVE-2017-5645 [CVE-2017-5645] is a critical vulnerability with a CVSS score of 9.8 that allows arbitrary code execution through deserialization of specially crafted binary payloads in Log4j 2.x before 2.8.2.",
+      "cited_cve_ids": [
+        "CVE-2021-44228",
+        "CVE-2019-17571",
+        "CVE-2021-4104",
+        "CVE-2021-45046",
+        "CVE-2017-5645"
+      ],
+      "retrieved_count": 8
+    },
+    {
+      "id": "eval-014",
+      "question": "Is lodash vulnerable to code injection through template imports?",
+      "answer": "Yes, lodash is vulnerable to code injection through template imports. CVE-2021-23337 [CVE-2021-23337] has a CVSS score of 7.2 and is classified as HIGH severity, affecting lodash (npm) versions before 4.17.21. Additionally, CVE-2026-4800 [CVE-2026-4800] also indicates a vulnerability to code injection via `_.template` imports, with a CVSS score of 8.1 and HIGH severity, affecting versions 4.0.0 through 4.18.0.",
+      "cited_cve_ids": [
+        "CVE-2021-23337",
+        "CVE-2026-4800"
+      ],
+      "retrieved_count": 8
+    },
+    {
+      "id": "eval-015",
+      "question": "Does Express have any redirect-related security issues?",
+      "answer": "Yes, Express has several redirect-related security issues:\n\n1. CVE-2024-9266 [CVE-2024-9266] is an Open Redirect vulnerability affecting Express, specifically in versions from 3.4.5 before 4.0.0-rc1. \n\n2. CVE-2024-43796 [CVE-2024-43796] is a vulnerability that allows XSS via `response.redirect()` in Express versions before 4.20.0 and version 5.0.0, with a CVSS score of 5 and MEDIUM severity.\n\n3. CVE-2024-29041 [CVE-2024-29041] is another Open Redirect vulnerability affecting versions of Express.js prior to 4.19.2 and pre-release versions before 5.0.0-beta.3, with a CVSS score of 6.1 and MEDIUM severity.",
+      "cited_cve_ids": [
+        "CVE-2024-9266",
+        "CVE-2024-43796",
+        "CVE-2024-29041"
+      ],
+      "retrieved_count": 8
+    },
+    {
+      "id": "eval-016",
+      "question": "Is Flask vulnerable to denial of service via JSON handling?",
+      "answer": "Yes, Flask is vulnerable to denial of service via JSON handling. CVE-2018-1000656 [CVE-2018-1000656] has a CVSS score of 7.5 and is classified as HIGH severity, indicating that improper input validation can lead to a large amount of memory usage, potentially resulting in denial of service when incorrect JSON encoding is provided. Additionally, CVE-2019-1010083 [CVE-2019-1010083] also has a CVSS score of 7.5 and is classified as HIGH severity, where unexpected memory usage due to crafted encoded JSON data can lead to denial of service.",
+      "cited_cve_ids": [
+        "CVE-2018-1000656",
+        "CVE-2019-1010083"
+      ],
+      "retrieved_count": 8
+    },
+    {
+      "id": "eval-017",
+      "question": "What is CVE-2099-12345?",
+      "answer": "No matching CVE found for query: What is CVE-2099-12345?",
+      "cited_cve_ids": [],
+      "retrieved_count": 0
+    },
+    {
+      "id": "eval-018",
+      "question": "What CVEs affect express version 99.0.0?",
+      "answer": "No relevant CVE found.",
+      "cited_cve_ids": [],
+      "retrieved_count": 8
+    }
+  ]
+}

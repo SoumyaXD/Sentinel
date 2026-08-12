@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -22,20 +24,38 @@ logger = logging.getLogger(__name__)
 
 
 def _rate_limit_string() -> str:
-    """Return the rate-limit string from env, defaulting to '10/minute'."""
-    raw = os.getenv("RATE_LIMIT_PER_MINUTE", "")
+    """Return the rate-limit string from env, defaulting to '10/day'."""
+    raw = os.getenv("RATE_LIMIT_PER_DAY", "")
     try:
         value = int(raw)
         if value > 0:
-            return f"{value}/minute"
+            return f"{value}/day"
     except (ValueError, TypeError):
         pass
-    return "10/minute"
+    return "10/day"
 
 
 RATE_LIMIT_STRING = _rate_limit_string()
 
 limiter = Limiter(key_func=get_remote_address)
+
+# Load demo cache at startup
+DEMO_CACHE_PATH = Path("eval/demo_cache.json")
+DEMO_CACHE: dict[str, dict] = {}
+
+if DEMO_CACHE_PATH.exists():
+    with DEMO_CACHE_PATH.open() as f:
+        cache_data = json.load(f)
+        # Build a normalized-question-to-answer mapping
+        for entry in cache_data.get("entries", []):
+            # Store by normalized question (lowercase, stripped)
+            normalized_q = entry["question"].lower().strip()
+            DEMO_CACHE[normalized_q] = {
+                "answer": entry["answer"],
+                "cited_cve_ids": entry["cited_cve_ids"],
+                "retrieved_count": entry["retrieved_count"]
+            }
+    logger.info(f"Loaded {len(DEMO_CACHE)} demo cache entries from {DEMO_CACHE_PATH}")
 
 
 @asynccontextmanager
@@ -58,7 +78,7 @@ app.add_exception_handler(
     RateLimitExceeded,
     lambda request, exc: JSONResponse(
         status_code=429,
-        content={"detail": "Rate limit exceeded. Try again in a minute."},
+        content={"detail": "Rate limit exceeded. Try again tomorrow."},
     ),
 )
 app.add_middleware(SlowAPIMiddleware)
@@ -72,7 +92,7 @@ def _retrieve(question: str) -> list[dict]:
     return [{"text": d.page_content, "metadata": d.metadata} for d in docs]
 
 
-@app.get("/health")
+@app.get("/health", response_model=None, description="Health check endpoint verifying that OPENAI_API_KEY is set and the Chroma vector store is accessible.")
 def health() -> JSONResponse | dict[str, str]:
     if not os.getenv("OPENAI_API_KEY", "").strip():
         return JSONResponse(
@@ -91,7 +111,30 @@ def health() -> JSONResponse | dict[str, str]:
     return {"status": "ok"}
 
 
-@app.post("/ask", response_model=AskResponse)
+@app.post("/ask/demo", response_model=AskResponse, description="Demo endpoint serving pre-cached answers for the 18 evaluation questions from eval/eval_set.json. Returns instantly with no API cost and no rate limit. If the question doesn't match a cached entry, returns 400 with guidance to use POST /ask instead.")
+def ask_demo(body: AskRequest) -> AskResponse:
+    """Serve pre-cached demo answers for the 18 eval questions."""
+    normalized_q = body.question.lower().strip()
+    
+    if normalized_q in DEMO_CACHE:
+        cached = DEMO_CACHE[normalized_q]
+        return AskResponse(
+            answer=cached["answer"],
+            cited_cve_ids=cached["cited_cve_ids"],
+            retrieved_count=cached["retrieved_count"]
+        )
+    
+    # Not in cache
+    raise HTTPException(
+        status_code=400,
+        detail=(
+            "This demo endpoint only serves the 18 pre-set evaluation questions from eval/eval_set.json. "
+            "Your question was not recognized. To ask a custom question, use POST /ask instead (subject to rate limits)."
+        )
+    )
+
+
+@app.post("/ask", response_model=AskResponse, description="Submit a custom CVE security question. This endpoint runs the full RAG pipeline with real-time retrieval and OpenAI generation. Subject to rate limiting (10 requests per IP per day by default).")
 @limiter.limit(RATE_LIMIT_STRING)
 def ask(request: Request, body: AskRequest) -> AskResponse:
     question = body.question.strip()
