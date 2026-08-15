@@ -10,11 +10,13 @@ RUN pip install --no-cache-dir \
 
 RUN pip install --no-cache-dir -r requirements-docker.txt
 
-ARG NVD_API_KEY
+
 
 COPY . .
 
-RUN python -m ingest.nvd && \
+RUN --mount=type=secret,id=nvd_api_key \
+    NVD_API_KEY="$(cat /run/secrets/nvd_api_key)" \
+    python -m ingest.nvd && \
     python -m ingest.osv && \
     python -m ingest.normalize && \
     python -m rag.chunk && \
