@@ -13,7 +13,8 @@
         body {
             margin: 0;
             min-height: 100vh;
-            font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont,
+                "Segoe UI", sans-serif;
             background: #0b0f14;
             color: #e6edf3;
             display: flex;
@@ -87,16 +88,17 @@
         }
 
         button {
-            border: 0;
             border-radius: 8px;
             padding: 11px 18px;
             font-weight: 600;
             cursor: pointer;
+            font: inherit;
         }
 
         .primary {
             background: #e6edf3;
             color: #0b0f14;
+            border: 0;
         }
 
         .secondary {
@@ -105,9 +107,52 @@
             border: 1px solid #30363d;
         }
 
+        button:hover {
+            opacity: 0.9;
+        }
+
         button:disabled {
             opacity: 0.5;
             cursor: not-allowed;
+        }
+
+        .demo-section {
+            margin-top: 22px;
+        }
+
+        .demo-title {
+            font-size: 14px;
+            font-weight: 600;
+            margin-bottom: 5px;
+        }
+
+        .demo-description {
+            color: #8b949e;
+            font-size: 13px;
+            margin-bottom: 12px;
+        }
+
+        .examples {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .example {
+            width: 100%;
+            text-align: left;
+            background: #0b0f14;
+            color: #8b949e;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 10px 12px;
+            font-size: 13px;
+            font-weight: 400;
+        }
+
+        .example:hover {
+            color: #e6edf3;
+            border-color: #58a6ff;
         }
 
         #status {
@@ -119,6 +164,8 @@
         #result {
             display: none;
             margin-top: 25px;
+            border-top: 1px solid #30363d;
+            padding-top: 22px;
         }
 
         .answer {
@@ -129,7 +176,7 @@
 
         .meta {
             display: flex;
-            gap: 10px;
+            gap: 8px;
             flex-wrap: wrap;
             margin-top: 20px;
         }
@@ -155,6 +202,10 @@
         a {
             color: #58a6ff;
             text-decoration: none;
+        }
+
+        a:hover {
+            text-decoration: underline;
         }
     </style>
 </head>
@@ -187,9 +238,37 @@
             </button>
 
             <button class="secondary" id="demoBtn">
-                Try cached demo
+                Try Demo
             </button>
         </div>
+
+        <section class="demo-section">
+            <div class="demo-title">Free demo — instant responses</div>
+
+            <div class="demo-description">
+                Try one of these pre-evaluated security questions.
+            </div>
+
+            <div class="examples">
+
+                <button class="example">
+                    What is CVE-2021-44228?
+                </button>
+
+                <button class="example">
+                    What CVEs affect lodash 4.17.20 via template import handling?
+                </button>
+
+                <button class="example">
+                    Are there any remote code execution vulnerabilities in Log4j?
+                </button>
+
+                <button class="example">
+                    Is Flask vulnerable to denial of service via JSON handling?
+                </button>
+
+            </div>
+        </section>
 
         <div id="status"></div>
 
@@ -228,6 +307,17 @@
     const answer = document.getElementById("answer");
     const retrieved = document.getElementById("retrieved");
     const cves = document.getElementById("cves");
+
+    const examples = document.querySelectorAll(".example");
+
+    examples.forEach((example) => {
+        example.addEventListener("click", () => {
+            questionInput.value = example.textContent.trim();
+            questionInput.focus();
+            status.textContent =
+                "Question selected. Click Try Demo for the cached response.";
+        });
+    });
 
     async function ask(endpoint) {
         const question = questionInput.value.trim();
@@ -287,6 +377,7 @@
     }
 
     askBtn.addEventListener("click", () => ask("/ask"));
+
     demoBtn.addEventListener("click", () => ask("/ask/demo"));
 </script>
 
