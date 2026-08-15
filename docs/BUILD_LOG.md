@@ -1950,5 +1950,378 @@ Checkpoint C3.
 
 ---
 
-*Log continues with Checkpoint C3 (rate limiting, startup validation, real
-health checks) in next session.*
+## Checkpoint C3 - Rate Limiting, Startup Validation, Real Health Checks
+
+**Objective:** add the first layer of cost/abuse protection to `POST
+/ask` before any public deployment is considered - per-IP rate limiting
+via `slowapi`, fail-fast startup validation of required configuration,
+and a `/health` endpoint that reflects real service state rather than a
+static response.
+
+### Implementation summary
+
+- `slowapi`-based rate limiting on `POST /ask` only (`GET /health`
+  deliberately excluded, so deployment-platform health checks are never
+  blocked), limit configurable via `RATE_LIMIT_PER_MINUTE` (default 10),
+  with a clear, custom 429 response body rather than slowapi's raw
+  default error format.
+- `AskRequest.question` given a `max_length=500` bound (previously
+  unbounded, a real, unguarded cost-exposure gap - every character
+  consumed feeds token cost).
+- FastAPI `lifespan` startup check: refuses to start if `OPENAI_API_KEY`
+  is unset, rather than only failing on the first real request.
+- `/health` rebuilt as a real check: verifies `OPENAI_API_KEY` is present
+  and the Chroma store directory exists and is non-empty, returning `503`
+  with a clear reason on failure rather than an unconditional `200`.
+
+### Defect - incorrect slowapi middleware import name
+
+**Symptom:** `uvicorn app.main:app --reload` failed at import time with
+`ImportError: cannot import name '_SlowAPIMiddleware' from
+'slowapi.middleware'`.
+
+**Root-cause analysis:** the leading underscore in the imported name was
+itself the signal - Python convention marks underscore-prefixed names as
+private/internal, meaning a public, real class with a different name
+almost certainly existed. This is the same class of defect as several
+earlier ones this project has hit (an unverified OpenAI client parameter
+in Checkpoint C1, an outdated Gemini model name in Checkpoint A10) - a
+plausible-sounding API name used without confirming it against the
+actually-installed package.
+
+**Remediation:** the installed `slowapi.middleware` module was inspected
+directly (`dir(slowapi.middleware)`) to find the real, public export
+(`SlowAPIMiddleware`, no underscore), and the import corrected. The
+broader integration pattern (`Limiter`, `app.state.limiter`, the
+`RateLimitExceeded` exception handler) was also re-checked against the
+installed package at the same time, on the reasoning that one wrong
+API-name guess is often accompanied by others nearby - none were found
+this time.
+
+### Two further hardening fixes, caught on review before being accepted
+
+- **`sys.exit(1)` inside the `lifespan` async context manager was
+  replaced with `raise RuntimeError(...)`.** `sys.exit()` from within an
+  ASGI lifespan context does not reliably produce clean shutdown behavior
+  under `uvicorn` (risk of a confusing traceback or a stuck process
+  rather than a clean, reported startup failure); raising an exception is
+  the standard, correctly-handled pattern for lifespan startup failures.
+- **The Chroma-directory check in `/health` was wrapped in a
+  `try`/`except OSError`.** The original `CHROMA_DIR.exists() and
+  any(CHROMA_DIR.iterdir())` check could itself raise
+  (`PermissionError`, `FileNotFoundError`) under real filesystem
+  conditions (e.g. a container filesystem mid-mount), which would crash
+  the health endpoint entirely rather than returning the intended clean
+  `503 degraded` response - defeating the purpose of a health check that
+  should degrade gracefully, not fail unpredictably.
+
+**Outcome:** Checkpoint C3 accepted as complete following the import
+fix and both hardening corrections, verified by the app starting cleanly
+and the full manual test suite (11 rapid requests -> 429 on the 11th,
+`/health` reflecting real state, oversized question rejected) passing.
+
+---
+
+## Checkpoint C4 - Rate Limiting & Cost Safety (Revised Scope)
+
+**Objective:** per an updated project spec, replace Checkpoint C3's
+per-minute rate limit with a per-IP, per-day limit (a materially
+different and stricter cost ceiling - 10/minute still permits up to
+14,400 requests/day if paced, while 10/day is a real ceiling), add a
+cached, zero-cost demo mode serving the 18 known evaluation questions
+instantly, and confirm an OpenAI dashboard-level hard spend cap - the
+external safety net independent of any application-level limit.
+
+### Implementation summary
+
+- `RATE_LIMIT_PER_MINUTE` replaced with `RATE_LIMIT_PER_DAY` (default
+  10), producing a `slowapi` limit string of the form `"{n}/day"`.
+- A one-time script, `scripts/generate_demo_cache.py`, runs the real
+  pipeline once against all 18 `eval/eval_set.json` questions and writes
+  `eval/demo_cache.json` (question, answer, cited CVE IDs, retrieved
+  count per entry) - committed to the repo, not gitignored, since it
+  represents real, reusable output.
+- A new `POST /ask/demo` endpoint serves cached answers instantly for a
+  recognized question, with **no live API call and no rate limiting**;
+  unrecognized questions return a clear `400` pointing to `POST /ask`.
+  `POST /ask` remains the real-pipeline, rate-limited "try your own
+  query" path.
+- OpenAI dashboard hard monthly spend cap confirmed set by the developer
+  (\$0.50 - notably stricter than the spec's suggested \$8-9 range, a
+  deliberate, more cautious choice given this project's prior billing
+  surprises across Checkpoints A10 and B2).
+
+### Defect 1 - rate-limit test could not fail
+
+**Symptom:** the initial `test_c4_endpoints.py` included a rate-limit
+test that accepted either a `200` or a `429` response as passing,
+explicitly commented as "might be 200 or might hit rate limit depending
+on prior usage." A test with no possible failure condition verifies
+nothing - the checkpoint's own "Done when" requirement (confirm the 11th
+request specifically is rejected) was not actually being checked.
+
+**Remediation:** rewritten to mock `retrieve_for_ask()` and
+`generate_answer()` (avoiding real API cost during the test itself),
+issue exactly 11 requests, and assert specifically that the 11th
+(`responses[10]`) returns `429` with the expected error message -
+verified in a real run: requests 1-10 returned `200`, request 11
+returned `429`, matching the spec's requirement precisely.
+
+### Defect 2 - demo-cache lookup was exact-string-fragile
+
+**Symptom:** `/ask/demo`'s cache lookup normalized only case and
+surrounding whitespace, meaning a trivially reworded version of a cached
+question (e.g. omitting a trailing `?`) would miss the cache and return
+an unnecessary `400` - undermining the endpoint's purpose of a reliable,
+always-available free demo experience.
+
+**Remediation:** normalization extended to also strip trailing
+punctuation (`?`, `.`, `!`), applied identically on both the cache-build
+side (`generate_demo_cache.py`) and the lookup side (`app/main.py`),
+confirmed consistent by direct inspection of both call sites. Verified
+with a dedicated test confirming a cached question missing its trailing
+`?` still resolves correctly.
+
+### Defect 3 (minor, process-hygiene) - duplicated routing logic
+
+**Symptom:** the exact-ID-bypass-then-LangChain-semantic-search routing
+helper (first introduced as a defect fix in Checkpoint C2) had been
+independently reimplemented, identically, in both `app/main.py` and
+`scripts/generate_demo_cache.py` - a maintenance risk, since a future
+change to routing logic would need to be made in two places, and could
+easily be updated in one and forgotten in the other.
+
+**Remediation:** the helper was extracted into `rag/retriever.py` as
+`retrieve_for_ask()` - the single canonical routing function, now
+imported by both `app/main.py` and `scripts/generate_demo_cache.py`
+rather than each maintaining its own copy.
+
+### Final validation
+
+Full `test_c4_endpoints.py` run, all 5 tests passing on real (not
+mocked, except where noted for the rate-limit test's cost-avoidance)
+execution: demo endpoint returns a cached answer instantly; demo
+endpoint correctly matches a question missing trailing punctuation; demo
+endpoint correctly rejects an unrecognized question with a clear `400`;
+`/ask`'s daily rate limit correctly rejects exactly the 11th request;
+`/health` responds correctly.
+
+**Outcome:** Checkpoint C4 accepted as complete. All four "Done when"
+criteria from the spec are confirmed: rate limiting verified via a real,
+falsifiable test; the OpenAI dashboard spend cap is set; cached demo
+questions return instantly at zero API cost; the live query path is
+confirmed independently rate-limited from the cached path.
+
+---
+
+## Checkpoint C5 - Dockerization
+
+**Objective:** containerize the complete Sentinel FastAPI service into a
+reproducible Docker image, self-contained with the full ingestion
+pipeline baked in at build time - FastAPI, CPU-only PyTorch, RAG
+dependencies, NVD + OSV ingestion, normalized data, chunking, the
+`all-MiniLM-L6-v2` ONNX embedding model, and the Chroma vector store.
+
+### Defect 1 - GPU-targeted PyTorch bloating the build
+
+**Symptom:** the initial build attempted to install the standard PyTorch
+package, which pulled in CUDA/NVIDIA dependencies despite Sentinel only
+requiring CPU inference - a large, unnecessary download that eventually
+failed partway through.
+
+**Remediation:** dependencies split into `requirements-docker.txt`
+(trimmed of dev-only tooling) with PyTorch installed separately as an
+explicit CPU-only wheel (`--index-url
+https://download.pytorch.org/whl/cpu`, `torch==2.13.0+cpu`) before the
+remaining requirements, removing the CUDA dependency chain entirely from
+the production image.
+
+### Defect 2 - build-time secret handling for `NVD_API_KEY`
+
+**Investigation:** passing `NVD_API_KEY` (required by the ingestion step)
+via a plain Dockerfile `ARG`/`ENV` was identified as a real risk - Docker
+itself flagged this with a `SecretsUsedInArgOrEnv` warning, since `ARG`
+values persist in image layer history and are extractable via `docker
+history` even after the build completes.
+
+**Remediation:** switched to a Docker BuildKit secret mount
+(`RUN --mount=type=secret,id=nvd_api_key ...`), which makes the key
+available only to the specific `RUN` step that needs it, without writing
+it into any image layer. `NVD_API_KEY` (build-time secret, consumed only
+by ingestion) and `OPENAI_API_KEY` (runtime environment variable, read by
+the FastAPI service at request time, with the existing fail-fast startup
+check from Checkpoint C3 unchanged) were deliberately kept as two
+separate, differently-scoped secrets rather than unified.
+
+**Host-compatibility research, before committing to a deployment
+platform:** Railway's Dockerfile documentation was found to document
+`ARG`-based variable injection only, with no documented support for
+BuildKit `--secret` mounts - a real uncertainty for this project's
+Dockerfile as written. Render's documentation explicitly covers Docker
+build secret mounts, via a secret-*file* mechanism
+(`RUN --mount=type=secret,id=FILENAME,dst=/etc/secrets/FILENAME`) rather
+than the simpler `--secret id=x,env=Y` shortcut used for local builds.
+This documented, verified difference (not an assumption) was the basis
+for selecting **Render** over Railway for deployment - the Dockerfile
+was adapted to consume the secret from Render's documented
+`/etc/secrets/nvd_api_key` path.
+
+### Validation
+
+Local build and run verified: image built successfully (~2.78GB disk
+usage, ~632MB content size, inspected via `docker image ls` and `docker
+history`), container filesystem directly inspected via an interactive
+shell to confirm the application code and generated vector-store data
+were genuinely present inside the image (not merely assumed from a
+successful build exit code), and the app correctly refused to start
+without `OPENAI_API_KEY` set, consistent with Checkpoint C3's existing
+fail-fast behavior. Port configuration was made host-flexible
+(`CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port
+${PORT:-8000}"]`), since Render assigns its own `$PORT` at runtime.
+
+**Outcome:** Checkpoint C5 accepted as complete, pending the deployment
+checkpoint's own independent verification (Checkpoint C6 surfaced an
+additional reproducibility defect not caught by local testing alone -
+see below).
+
+---
+
+## Checkpoint C6 - Deployment
+
+**Objective:** deploy the Dockerized service to Render, with explicit
+live verification (not assumed from local success) of `/health`,
+`/ask/demo`, `/ask`, and - critically, per this checkpoint's own stated
+requirement - the rate limiter actually functioning on the deployed
+instance, not just locally.
+
+### Defect - build not actually reproducible from a clean checkout
+
+**Symptom:** the first Render deployment attempt failed during the
+embedding step (`rag.store` -> `rag.embed` -> loading
+`all-MiniLM-L6-v2`), with a `RuntimeError` indicating the ONNX model
+bundle could not be loaded.
+
+**Root-cause analysis, confirmed with direct evidence rather than
+assumed:** the local Docker build had appeared to work correctly, but
+only because the local development machine's working directory happened
+to contain a previously-downloaded model cache
+(`data/.model_cache/all-MiniLM-L6-v2/onnx/`) that `COPY . .` was silently
+picking up. Running `git ls-files data/.model_cache` confirmed this
+directory was **not tracked by git at all** - the local build's success
+depended on developer-machine state that did not exist anywhere in the
+actual repository. Render's build performs a genuinely clean checkout
+from GitHub, which correctly had no such cache present, causing the
+embedding step to fail with nothing to load.
+
+**Why this is a materially different and more serious class of defect
+than most caught elsewhere in this project:** earlier defects (the
+fabricated shim packages in Checkpoint B1, the various unverified-API-name
+guesses) were caught specifically *because* real execution was insisted
+upon over trusting a summary. This defect is the inverse case - the build
+*did* genuinely, honestly succeed every time it was tested locally; the
+problem was that "succeeds on my machine" and "succeeds from a truly
+clean checkout" are not the same claim, and only deploying to a host that
+performs a real clean checkout surfaced the gap. This is a useful,
+general lesson distinct from this project's other defect patterns: local
+verification, however rigorous, cannot substitute for verifying against
+a genuinely clean environment when reproducibility is the actual property
+being tested.
+
+**Remediation:** rather than relying on the model being regenerated at
+build time (which would require network access to Hugging Face during
+every build) or informally re-adding it to `.gitignore`'s exceptions, the
+~91MB ONNX model bundle (`model.onnx`, tokenizer files, config) was
+explicitly version-controlled via **Git LFS**
+(`.gitattributes` tracking `data/.model_cache/all-MiniLM-L6-v2/onnx/*`),
+making the artifact a genuine, reproducible part of the repository rather
+than an implicit, undocumented dependency on developer-machine state.
+
+**A secondary, minor issue surfaced during this fix:** the model-cache
+commit initially failed to push due to branch divergence (a concurrent
+`PORT`-configuration commit had already been pushed to `origin/main`).
+Resolved via a standard fetch-and-integrate, without requiring a force
+push - a materially lower-risk resolution than the force-push-based fixes
+this project needed earlier in its git history (Checkpoints A9 and B1).
+
+### Live deployment verification
+
+- Render Docker build completed successfully end to end (NVD ingestion,
+  OSV ingestion, normalization, chunking, embedding, Chroma storage,
+  image build, FastAPI startup all confirmed) on the second attempt,
+  post-fix.
+- `GET /health` verified returning `200 OK` on the live deployed URL.
+- `POST /ask/demo` verified returning a correct cached response with no
+  OpenAI API call and no rate limiting, on the live deployment.
+- `POST /ask` verified performing genuine end-to-end retrieval and
+  OpenAI generation against the live deployment, not merely a local
+  simulation.
+- **Rate limiting verified live**, per this checkpoint's explicit
+  requirement: repeated real requests were made directly against the
+  public `/ask` endpoint until the configured limit
+  (`RATE_LIMIT_PER_DAY=10`) was reached, producing a genuine `HTTP 429`
+  response from the deployed instance - confirming the limiter is active
+  in production, not only under local testing conditions. A latency
+  change noticed after the first request was investigated and correctly
+  attributed to normal request-time variation / a warmed application
+  process, not to any undocumented response caching (`/ask` does not
+  cache generated answers).
+
+### Scope addition - portfolio-facing web interface
+
+The root URL (`GET /`) originally returned a `404` (correct, expected
+behavior for an API-only service with no root route defined - not a
+deployment defect). A lightweight static interface
+(`static/index.html`, served via a new `GET /` FastAPI route) was added,
+providing a CVE-question input, live `/ask` and cached `/ask/demo`
+interaction, answer/citation/retrieved-count display, and example
+questions drawn from the actual `eval_set.json` (spanning direct-lookup,
+version-scoped, semantic, and trap-question types) rather than invented
+demo content. This changed the public root URL from an undifferentiated
+API `404` into an actual navigable portfolio interface.
+
+### Known, currently unresolved item - Render free-tier memory pressure
+
+Following deployment and the UI addition, Render reported the service
+exceeding its free-tier memory limit (512MB RAM, 0.1 CPU) at least once,
+triggering an instance-level restart. The Sentinel runtime's memory
+footprint (Python, FastAPI/Uvicorn, Chroma, ONNX Runtime, the embedding
+model, and in-memory vector data all loaded concurrently) is genuinely
+substantial relative to this free-tier ceiling. As of this log entry, the
+deployed service is confirmed live and responding correctly
+(`/health` returning `200 OK`), but the underlying memory-pressure cause
+has **not** been isolated or fixed - it is not currently known whether
+the prior restart reflects a one-time startup spike, a sustained
+near-limit baseline, or a pattern likely to recur under further load.
+This is explicitly logged as an open item for future investigation
+(candidate causes to check: model-loading footprint, Chroma/vector-store
+memory usage, startup-time allocation, or request-time allocation),
+rather than treated as resolved on the basis of the service currently
+being up.
+
+**Outcome:** Checkpoint C6 accepted as complete on its stated
+requirements (live deployment, `/health`, `/ask/demo`, `/ask`, and live
+rate-limit verification are all confirmed with real evidence against the
+deployed instance) - with one honestly-tracked open item (Render
+free-tier memory pressure, cause not yet isolated) carried forward
+explicitly rather than silently dropped.
+
+---
+
+## Stage C - Complete (v1 Complete)
+
+All of Stage C (Checkpoints C1-C6) is now complete: RAGAS evaluation
+layered alongside the deterministic harness, a FastAPI service using the
+fully-validated Stage B retrieval/generation pipeline, per-day rate
+limiting with a cached zero-cost demo path, a Dockerized and
+Git-LFS-reproducible build, and a live public deployment on Render with
+independently-verified rate limiting in production.
+
+This completes Sentinel's full v1 roadmap (Stage A: hand-built RAG,
+Stage B: LangChain refactor, Stage C: evaluation, service, and
+deployment). v2 (MCP tools, a LangGraph agent, LoRA/QLoRA fine-tuning)
+was deliberately not pursued within Sentinel - see `docs/PRD.md` and
+`docs/FUTURE_WORK.md` for the reasoning; those skills are instead being
+demonstrated via small, standalone MCP and LangGraph projects outside
+this repository.
+
+*End of log - Checkpoints A0 through C6 (v1 complete).*
