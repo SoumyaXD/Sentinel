@@ -180,6 +180,7 @@ def _build_ragas_metrics() -> tuple[Any, Any]:
     client_kwargs: dict[str, Any] = {
         "timeout": float(os.getenv("RAGAS_OPENAI_TIMEOUT", "60")),
         "max_retries": int(os.getenv("RAGAS_OPENAI_MAX_RETRIES", "5")),
+        "max_completion_tokens": int(os.getenv("RAGAS_OPENAI_MAX_TOKENS", "2048")),
     }
     base_url = os.getenv("RAGAS_OPENAI_BASE_URL", os.getenv("OPENAI_BASE_URL", "")).strip()
     if base_url:
@@ -193,9 +194,7 @@ def _build_ragas_metrics() -> tuple[Any, Any]:
         or "text-embedding-3-small"
     )
 
-    # Pass max_tokens to llm_factory as a model argument, not to the client constructor
-    judge_max_tokens = int(os.getenv("RAGAS_OPENAI_MAX_TOKENS", "2048"))
-    judge = llm_factory(judge_model, client=client, max_tokens=judge_max_tokens)
+    judge = llm_factory(judge_model, client=client)
     embeddings = embedding_factory("openai", model=embedding_model, client=client)
     faithfulness = Faithfulness(llm=judge)
     answer_relevancy = AnswerRelevancy(llm=judge, embeddings=embeddings)
