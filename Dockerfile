@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.2
 FROM python:3.13-slim
 
 WORKDIR /app
@@ -14,8 +15,8 @@ RUN pip install --no-cache-dir -r requirements-docker.txt
 
 COPY . .
 
-RUN --mount=type=secret,id=nvd_api_key \
-    NVD_API_KEY="$(cat /run/secrets/nvd_api_key)" \
+RUN --mount=type=secret,id=nvd_api_key,dst=/etc/secrets/nvd_api_key \
+    NVD_API_KEY="$(cat /etc/secrets/nvd_api_key)" \
     python -m ingest.nvd && \
     python -m ingest.osv && \
     python -m ingest.normalize && \
